@@ -1,0 +1,22 @@
+drive_controller_node:
+  ros__parameters:
+    # Pose topic: /pcl_pose (NDT) or /amcl_pose (AMCL bag testing)
+    pose_topic: "/pcl_pose"
+
+    # Pure pursuit parameters
+    lookahead_distance: 1.5    # meters ahead to track
+    max_linear_speed: 0.5      # m/s
+    min_linear_speed: 0.1      # m/s (minimum when turning or near goal)
+    max_steering_angle: 0.5    # radians (~28.6 degrees)
+    wheelbase: 0.32            # meters (distance between front and rear axle)
+    goal_tolerance: 0.3        # meters — stop when this close to goal
+
+    # Control loop
+    control_rate: 20.0         # Hz
+
+    # Speed reduction when steering angle exceeds this threshold
+    speed_reduction_angle: 0.3  # radians
+
+    # Dynamic obstacle handling
+    enable_obstacle_stop: true
+    obstacle_stop_timeout: 2.0  # seconds before requesting replan

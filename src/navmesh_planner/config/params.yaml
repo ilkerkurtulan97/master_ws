@@ -1,0 +1,17 @@
+navmesh_planner_node:
+  ros__parameters:
+    navmesh_path: "/home/iko/Desktop/master_thesis/bitlab/bitlab.bin"
+
+    # Pose topic: /pcl_pose (NDT) or /amcl_pose (AMCL bag testing)
+    pose_topic: "/pcl_pose"
+
+    # Detour search extents (half-size of search box for findNearestPoly)
+    poly_search_extent_x: 2.0
+    poly_search_extent_y: 4.0   # Y-UP height in Detour
+    poly_search_extent_z: 2.0
+
+    max_path_polys: 2048
+    max_straight_path: 256
+
+    # Waypoint interpolation: 0 = disabled, >0 = spacing in meters
+    waypoint_spacing: 0.5
