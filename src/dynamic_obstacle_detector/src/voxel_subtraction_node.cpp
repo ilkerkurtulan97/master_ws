@@ -1,15 +1,13 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
+#include <nav_msgs/msg/odometry.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
-#include <tf2_ros/buffer.h>
-#include <tf2_ros/transform_listener.h>
-#include <tf2_sensor_msgs/tf2_sensor_msgs.hpp>
-#include <tf2_eigen/tf2_eigen.hpp>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl/io/pcd_io.h>
+#include <Eigen/Geometry>
 
 #include <unordered_set>
 #include <unordered_map>
@@ -68,6 +66,7 @@ public:
     this->declare_parameter<int>("inflation_radius", 1);
     this->declare_parameter<int>("min_consecutive_scans", 3);
     this->declare_parameter<double>("ground_filter_height", 0.2);
+    this->declare_parameter<std::string>("message_typ", "PoseWithCovariance");
 
     // Get parameters
     std::string map_path = this->get_parameter("static_map_path").as_string();
@@ -79,17 +78,12 @@ public:
     inflation_radius_ = this->get_parameter("inflation_radius").as_int();
     min_consecutive_scans_ = this->get_parameter("min_consecutive_scans").as_int();
     ground_filter_height_ = this->get_parameter("ground_filter_height").as_double();
+    message_typ_ = this->get_parameter("message_typ").as_string();
 
     if (map_path.empty()) {
       RCLCPP_ERROR(this->get_logger(), "static_map_path parameter is required!");
       return;
     }
-
-    // --------------------------------------------------------
-    // TF2 buffer and listener (uses the full TF tree from bag)
-    // --------------------------------------------------------
-    tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
-    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
     // --------------------------------------------------------
     // Step 1: Load and voxelize static map (ONCE)
@@ -116,9 +110,22 @@ public:
       cloud_topic, rclcpp::SensorDataQoS(),
       std::bind(&VoxelSubtractionNode::cloud_callback, this, std::placeholders::_1));
 
-    pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
-      pose_topic, 10,
-      std::bind(&VoxelSubtractionNode::pose_callback, this, std::placeholders::_1));
+    // Subscribe to pose based on message_typ parameter
+    if (message_typ_ == "Odometry") {
+      // Odometry mode: robotPose gives the lidar's pose in map frame directly
+      odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
+        pose_topic, 10,
+        std::bind(&VoxelSubtractionNode::odom_callback, this, std::placeholders::_1));
+      RCLCPP_INFO(this->get_logger(),
+        "Pose mode: Odometry (pose = lidar position in map)");
+    } else {
+      // PoseWithCovariance mode (default — for localization packages like AMCL/NDT)
+      pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
+        pose_topic, 10,
+        std::bind(&VoxelSubtractionNode::pose_callback, this, std::placeholders::_1));
+      RCLCPP_INFO(this->get_logger(),
+        "Pose mode: PoseWithCovariance");
+    }
 
     // --------------------------------------------------------
     // Publishers
@@ -128,6 +135,14 @@ public:
 
     obstacle_cloud_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
       "/dynamic_obstacles_cloud", 10);
+
+    // Live lidar transformed to map frame (for RViz alignment verification)
+    lidar_map_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
+      "/lidar_map_frame", 10);
+
+    // Pre-temporal-filter dynamic candidates (debug: shows subtraction before persistence check)
+    candidates_cloud_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
+      "/dynamic_candidates_cloud", 10);
 
     // Static map as voxelized point cloud (default QoS, republish periodically for RViz)
     static_voxel_cloud_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
@@ -152,7 +167,7 @@ public:
       "Ground filter: ignore points below robot_z + %.2fm",
       ground_filter_height_);
     RCLCPP_INFO(this->get_logger(),
-      "Using TF2 for cloud transformation to 'map' frame");
+      "Transform: pose_topic position applied directly to cloud points");
   }
 
 private:
@@ -165,6 +180,7 @@ private:
   int inflation_radius_;
   int min_consecutive_scans_;
   double ground_filter_height_;
+  std::string message_typ_;
 
   // Voxel data
   VoxelSet raw_static_voxels_;
@@ -175,19 +191,22 @@ private:
   using VoxelCountMap = std::unordered_map<VoxelKey, int, VoxelKeyHash>;
   VoxelCountMap voxel_persistence_;
 
-  // Current robot pose (for activation zone check)
+  // Current robot/lidar pose
   bool pose_received_ = false;
   Eigen::Isometry3d robot_pose_ = Eigen::Isometry3d::Identity();
+  rclcpp::Time last_odom_stamp_{0, 0, RCL_ROS_TIME};
 
-  // TF2
-  std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
-  std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+  // Frame counter for clock-independent diagnostic logging
+  uint64_t diag_frame_ = 0;
 
   // ROS interfaces
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr pose_sub_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr obstacle_marker_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr obstacle_cloud_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_map_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr candidates_cloud_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr static_voxel_cloud_pub_;
   rclcpp::TimerBase::SharedPtr static_map_timer_;
 
@@ -230,25 +249,40 @@ private:
   }
 
   // --------------------------------------------------------
-  // Pose callback (still used for activation zone direction)
+  // Common pose update (shared by both callbacks)
   // --------------------------------------------------------
-  void pose_callback(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) {
+  void update_robot_pose(const geometry_msgs::msg::Pose &pose) {
     robot_pose_ = Eigen::Isometry3d::Identity();
 
     Eigen::Quaterniond q(
-      msg->pose.pose.orientation.w,
-      msg->pose.pose.orientation.x,
-      msg->pose.pose.orientation.y,
-      msg->pose.pose.orientation.z
+      pose.orientation.w,
+      pose.orientation.x,
+      pose.orientation.y,
+      pose.orientation.z
     );
     robot_pose_.rotate(q);
     robot_pose_.translation() = Eigen::Vector3d(
-      msg->pose.pose.position.x,
-      msg->pose.pose.position.y,
-      msg->pose.pose.position.z
+      pose.position.x,
+      pose.position.y,
+      pose.position.z
     );
 
     pose_received_ = true;
+  }
+
+  // --------------------------------------------------------
+  // Pose callback for PoseWithCovarianceStamped (localization mode)
+  // --------------------------------------------------------
+  void pose_callback(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) {
+    update_robot_pose(msg->pose.pose);
+  }
+
+  // --------------------------------------------------------
+  // Odom callback for Odometry (Isaac Sim / direct odom mode)
+  // --------------------------------------------------------
+  void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+    update_robot_pose(msg->pose.pose);
+    last_odom_stamp_ = msg->header.stamp;
   }
 
   // --------------------------------------------------------
@@ -256,36 +290,15 @@ private:
   // --------------------------------------------------------
   void cloud_callback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     if (!pose_received_) {
-      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
-        "No pose received yet, skipping cloud");
+      if (++diag_frame_ % 100 == 0) {
+        RCLCPP_WARN(this->get_logger(), "No pose received yet, skipping cloud (frame %lu)", diag_frame_);
+      }
       return;
     }
 
-    // --------------------------------------------------------
-    // Transform the entire cloud to map frame using TF2
-    // This uses the full chain: lidar -> base_link -> odom -> map
-    // --------------------------------------------------------
-    sensor_msgs::msg::PointCloud2 cloud_in_map;
-    bool already_in_map = (msg->header.frame_id == "map");
-
-    if (!already_in_map) {
-      try {
-        auto transform = tf_buffer_->lookupTransform(
-          "map", msg->header.frame_id, msg->header.stamp,
-          rclcpp::Duration::from_seconds(0.1));
-        tf2::doTransform(*msg, cloud_in_map, transform);
-      } catch (const tf2::TransformException &ex) {
-        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-          "TF2 transform failed: %s", ex.what());
-        return;
-      }
-    } else {
-      cloud_in_map = *msg;
-    }
-
-    // Convert transformed cloud to PCL
+    // Convert ROS msg to PCL (in sensor frame)
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
-    pcl::fromROSMsg(cloud_in_map, *cloud);
+    pcl::fromROSMsg(*msg, *cloud);
 
     // Robot position and forward direction (for activation zone)
     Eigen::Vector3d robot_pos = robot_pose_.translation();
@@ -307,23 +320,33 @@ private:
     //   2. Subtract inflated static
     //   3. Check activation zone
     // --------------------------------------------------------
+    int n_nan = 0, n_z = 0, n_ground = 0, n_static = 0, n_zone = 0;
+
     VoxelSet dynamic_voxels_in_zone;
 
-    for (const auto &pt : cloud->points) {
-      if (std::isnan(pt.x) || std::isnan(pt.y) || std::isnan(pt.z)) continue;
+    // Collect all transformed points for the map-frame lidar topic (RViz debug)
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_map(new pcl::PointCloud<pcl::PointXYZ>);
+    cloud_map->reserve(cloud->size());
 
-      Eigen::Vector3d p_map(pt.x, pt.y, pt.z);
+    for (const auto &pt : cloud->points) {
+      if (std::isnan(pt.x) || std::isnan(pt.y) || std::isnan(pt.z)) { n_nan++; continue; }
+
+      // Transform from lidar-local frame to map using robotPose
+      // (robotPose gives the lidar's ground-truth pose in map frame)
+      Eigen::Vector3d p_map = robot_pose_ * Eigen::Vector3d(pt.x, pt.y, pt.z);
+
+      cloud_map->push_back(pcl::PointXYZ(p_map.x(), p_map.y(), p_map.z()));
 
       // Absolute z filter (safety net)
-      if (p_map.z() < min_z_ || p_map.z() > max_z_) continue;
+      if (p_map.z() < min_z_ || p_map.z() > max_z_) { n_z++; continue; }
 
       // Relative ground filter: skip points near/below robot base (ground)
-      if (p_map.z() < ground_z_threshold) continue;
+      if (p_map.z() < ground_z_threshold) { n_ground++; continue; }
 
       VoxelKey vk = point_to_voxel(p_map.x(), p_map.y(), p_map.z(), voxel_size_);
 
       // Skip if part of inflated static map
-      if (inflated_static_voxels_.count(vk)) continue;
+      if (inflated_static_voxels_.count(vk)) { n_static++; continue; }
 
       // Check activation zone
       Eigen::Vector3d diff = p_map - robot_pos;
@@ -334,23 +357,53 @@ private:
         double dot = forward_dir.dot(diff.normalized());
         if (dot > cos_half_fov) {
           dynamic_voxels_in_zone.insert(vk);
+        } else {
+          n_zone++;
         }
+      } else {
+        n_zone++;
       }
     }
 
+    // Publish lidar transformed to map frame (for RViz alignment check)
+    {
+      sensor_msgs::msg::PointCloud2 out;
+      pcl::toROSMsg(*cloud_map, out);
+      out.header.frame_id = "map";
+      out.header.stamp = msg->header.stamp;
+      lidar_map_pub_->publish(out);
+    }
+
     // --------------------------------------------------------
-    // Temporal filtering: require consecutive scan appearances
-    // Voxels that disappear for even one frame get their count reset.
+    // Temporal filtering: decay-based persistence
+    // Seen voxels: count +1 (capped at min_consecutive_scans_)
+    // Unseen voxels: count -1; removed when count reaches 0
+    // This means a confirmed voxel survives brief detection gaps
+    // (e.g., rotating lidar beam missing a voxel for 1-2 scans)
+    // without resetting its counter from scratch.
     // --------------------------------------------------------
     VoxelCountMap new_persistence;
+
+    // Boost voxels detected this frame
     for (const auto &vk : dynamic_voxels_in_zone) {
       auto it = voxel_persistence_.find(vk);
       if (it != voxel_persistence_.end()) {
-        new_persistence[vk] = it->second + 1;
+        new_persistence[vk] = std::min(it->second + 1, min_consecutive_scans_);
       } else {
         new_persistence[vk] = 1;
       }
     }
+
+    // Decay voxels NOT detected this frame
+    for (const auto &[vk, count] : voxel_persistence_) {
+      if (new_persistence.find(vk) == new_persistence.end()) {
+        if (count > 1) {
+          new_persistence[vk] = count - 1;  // decay
+        }
+        // count == 1: voxel expires, not added
+      }
+    }
+
     voxel_persistence_ = std::move(new_persistence);
 
     // Only report voxels that persisted for enough consecutive scans
@@ -362,12 +415,41 @@ private:
     }
 
     // --------------------------------------------------------
+    // Diagnostic log every 100 frames (~2.8s at 36Hz) — clock-independent
+    // --------------------------------------------------------
+    if (++diag_frame_ % 100 == 0) {
+      RCLCPP_INFO(this->get_logger(),
+        "[diag #%lu] total=%zu nan=%d z_filt=%d gnd_filt=%d static_filt=%d zone_filt=%d | "
+        "pre_temporal=%zu confirmed=%zu | robot_z=%.2f gnd_thresh=%.2f",
+        diag_frame_, cloud->size(), n_nan, n_z, n_ground, n_static, n_zone,
+        dynamic_voxels_in_zone.size(), confirmed_dynamic.size(),
+        robot_pos.z(), ground_z_threshold);
+    }
+
+    // Publish pre-temporal-filter candidates (debug: before persistence check)
+    {
+      pcl::PointCloud<pcl::PointXYZ>::Ptr cand_cloud(new pcl::PointCloud<pcl::PointXYZ>);
+      cand_cloud->reserve(dynamic_voxels_in_zone.size());
+      for (const auto &vk : dynamic_voxels_in_zone) {
+        cand_cloud->push_back(pcl::PointXYZ(
+          (vk.x + 0.5f) * static_cast<float>(voxel_size_),
+          (vk.y + 0.5f) * static_cast<float>(voxel_size_),
+          (vk.z + 0.5f) * static_cast<float>(voxel_size_)));
+      }
+      sensor_msgs::msg::PointCloud2 cand_out;
+      pcl::toROSMsg(*cand_cloud, cand_out);
+      cand_out.header.frame_id = "map";
+      cand_out.header.stamp = msg->header.stamp;
+      candidates_cloud_pub_->publish(cand_out);
+    }
+
+    // --------------------------------------------------------
     // Publish results
     // --------------------------------------------------------
     if (confirmed_dynamic.empty()) {
       publish_empty_markers(msg->header.stamp);
     } else {
-      RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+      RCLCPP_INFO(this->get_logger(),
         "Dynamic obstacles confirmed: %zu voxels (candidates: %zu)",
         confirmed_dynamic.size(), dynamic_voxels_in_zone.size());
       publish_obstacle_markers(confirmed_dynamic, msg->header.stamp);

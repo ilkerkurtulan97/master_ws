@@ -12,9 +12,6 @@ find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
-find_package(tf2_ros REQUIRED)
-find_package(tf2_sensor_msgs REQUIRED)
-find_package(tf2_eigen REQUIRED)
 find_package(pcl_conversions REQUIRED)
 find_package(PCL REQUIRED COMPONENTS common io)
 
@@ -32,9 +29,6 @@ ament_target_dependencies(voxel_subtraction_node
   geometry_msgs
   visualization_msgs
   nav_msgs
-  tf2_ros
-  tf2_sensor_msgs
-  tf2_eigen
   pcl_conversions
 )
 
@@ -46,6 +40,7 @@ install(TARGETS
 install(DIRECTORY
   launch
   config
+  rviz
   DESTINATION share/${PROJECT_NAME}
 )
 

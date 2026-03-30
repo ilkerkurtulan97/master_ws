@@ -1,0 +1,40 @@
+voxel_subtraction_node:
+  ros__parameters:
+    # PCD static map (same origin as Isaac Sim OBJ)
+    static_map_path: "/mnt/storage/3d-scans/bitlab/Bitlab_20260305135305/data/pointcloud/Bitlab_hq_subsampled.pcd"
+
+    # Voxel size in meters. 0.1 gives better object coverage and finer resolution.
+    # At 0.1m, inflation_radius=1 still gives a 0.1m surface buffer (was 0.2m at 0.2m voxels).
+    voxel_size: 0.1
+
+    # Isaac Sim topic names
+    cloud_topic: "/front_3d_lidar/lidar_points"
+    pose_topic: "/robotPose"
+    message_typ: "Odometry" # or PoseWithCovariance
+
+    # Activation zone (wide for testing)
+    activation_distance: 10.0
+    fov_angle_deg: 360.0
+
+    # Inflation radius: 2 = 5x5x5 neighborhood (0.2m buffer around static surfaces)
+    # Fixes false positives from PCD subsampling gaps on walls/floor.
+    inflation_radius: 2
+
+    # Temporal filter: voxel must appear in N consecutive scans
+    # 1 = confirm on first appearance; correct for rotating lidars that publish
+    # partial scan slices (~90-100 deg per message at 36 Hz). Each cylinder voxel
+    # is only seen in 1-2 slices per rotation, so requiring >1 causes it to decay
+    # back to 0 before the next hit arrives. Marker lifetime (0.5s) handles visual
+    # smoothing. Static map subtraction is the primary noise filter.
+    min_consecutive_scans: 1
+
+    # Z-axis filter (wide — robot is at z≈-1, scene goes to z≈-4)
+    min_z: -5.0
+    max_z: 5.0
+
+    # Relative ground filter: ignore points below robot_z + this value.
+    # Nova Carter lidar is ~1.5m above the floor. With robot_z (lidar) ≈ -0.67,
+    # the floor is at approximately z ≈ -2.17 in map frame.
+    # -2.0 sets threshold at -2.67, safely below the floor.
+    # Floor hits pass through and are removed by static_filt (floor is in the PCD).
+    ground_filter_height: -2.0
