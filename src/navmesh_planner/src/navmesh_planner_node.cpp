@@ -8,8 +8,17 @@
 
 #include "navmesh_planner/navmesh_loader.hpp"
 #include "navmesh_planner/coordinate_utils.hpp"
+#include "navmesh_planner/tilecache_helpers.hpp"
 #include "DetourNavMesh.h"
 #include "DetourNavMeshQuery.h"
+#include "DetourTileCache.h"
+#include "DetourTileCacheBuilder.h"
+
+#include <pcl/point_cloud.h>
+#include <pcl/point_types.h>
+#include <pcl/segmentation/extract_clusters.h>
+#include <pcl/search/kdtree.h>
+#include <pcl_conversions/pcl_conversions.h>
 
 #include <cmath>
 #include <vector>
@@ -18,7 +27,9 @@
 class NavMeshPlannerNode : public rclcpp::Node {
 public:
   NavMeshPlannerNode() : Node("navmesh_planner_node") {
+    // --------------------------------------------------------
     // Parameters
+    // --------------------------------------------------------
     this->declare_parameter<std::string>("navmesh_path", "");
     this->declare_parameter<std::string>("pose_topic", "/pcl_pose");
     this->declare_parameter<double>("poly_search_extent_x", 2.0);
@@ -28,11 +39,26 @@ public:
     this->declare_parameter<int>("max_straight_path", 256);
     this->declare_parameter<double>("waypoint_spacing", 0.0);
 
+    // dtTileCache clustering parameters
+    this->declare_parameter<double>("cluster_tolerance", 0.5);
+    this->declare_parameter<int>("min_cluster_size", 5);
+    this->declare_parameter<int>("max_cluster_size", 5000);
+    this->declare_parameter<double>("obstacle_radius_default", 0.3);
+    this->declare_parameter<double>("obstacle_height", 2.0);
+    this->declare_parameter<double>("obstacle_replan_interval", 0.5);
+
     std::string navmesh_path = this->get_parameter("navmesh_path").as_string();
     std::string pose_topic = this->get_parameter("pose_topic").as_string();
     max_path_polys_ = this->get_parameter("max_path_polys").as_int();
     max_straight_path_ = this->get_parameter("max_straight_path").as_int();
     waypoint_spacing_ = this->get_parameter("waypoint_spacing").as_double();
+
+    cluster_tolerance_ = this->get_parameter("cluster_tolerance").as_double();
+    min_cluster_size_ = this->get_parameter("min_cluster_size").as_int();
+    max_cluster_size_ = this->get_parameter("max_cluster_size").as_int();
+    obstacle_radius_default_ = this->get_parameter("obstacle_radius_default").as_double();
+    obstacle_height_ = this->get_parameter("obstacle_height").as_double();
+    obstacle_replan_interval_ = this->get_parameter("obstacle_replan_interval").as_double();
 
     // Detour search extents (in Detour Y-UP coords)
     double ext_x = this->get_parameter("poly_search_extent_x").as_double();
@@ -43,14 +69,22 @@ public:
     extents_[2] = static_cast<float>(ext_z);
 
     // --------------------------------------------------------
-    // Load NavMesh
+    // Load NavMesh (auto-detect MSET vs TSET)
     // --------------------------------------------------------
     if (navmesh_path.empty()) {
       RCLCPP_ERROR(this->get_logger(), "navmesh_path parameter is required!");
       return;
     }
 
-    nav_mesh_ = loadNavMesh(navmesh_path);
+    // Create TileCache helper objects (needed for TSET loading)
+    tc_alloc_ = new LinearAllocator(32000);
+    tc_comp_ = new FastLZCompressor();
+    tc_proc_ = new MeshProcess();
+
+    NavMeshLoadResult load_result = loadNavMeshAuto(navmesh_path, tc_alloc_, tc_comp_, tc_proc_);
+    nav_mesh_ = load_result.navMesh;
+    tile_cache_ = load_result.tileCache;
+
     if (!nav_mesh_) {
       RCLCPP_ERROR(this->get_logger(), "Failed to load navmesh: %s", navmesh_path.c_str());
       return;
@@ -63,8 +97,16 @@ public:
       const dtMeshTile* tile = const_mesh->getTile(i);
       if (tile && tile->header && tile->dataSize > 0) tile_count++;
     }
-    RCLCPP_INFO(this->get_logger(), "NavMesh loaded: %d tiles from %s",
-      tile_count, navmesh_path.c_str());
+
+    if (tile_cache_) {
+      RCLCPP_INFO(this->get_logger(),
+        "TSET NavMesh loaded: %d tiles, dtTileCache active (dynamic obstacles enabled) from %s",
+        tile_count, navmesh_path.c_str());
+    } else {
+      RCLCPP_WARN(this->get_logger(),
+        "MSET NavMesh loaded: %d tiles from %s (static only, dynamic obstacles NOT supported)",
+        tile_count, navmesh_path.c_str());
+    }
 
     // Init query
     nav_query_ = dtAllocNavMeshQuery();
@@ -76,11 +118,6 @@ public:
     // --------------------------------------------------------
     // Subscribers
     // --------------------------------------------------------
-    // Support both PoseStamped (NDT /pcl_pose) and PoseWithCovarianceStamped (AMCL)
-    pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
-      pose_topic, 10,
-      std::bind(&NavMeshPlannerNode::pose_callback, this, std::placeholders::_1));
-
     pose_cov_sub_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
       pose_topic, 10,
       std::bind(&NavMeshPlannerNode::pose_cov_callback, this, std::placeholders::_1));
@@ -93,12 +130,22 @@ public:
       "/replan_request", 10,
       std::bind(&NavMeshPlannerNode::replan_callback, this, std::placeholders::_1));
 
+    // Subscribe to dynamic obstacle cloud only if TileCache is active
+    if (tile_cache_) {
+      obstacle_cloud_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+        "/dynamic_obstacles_cloud", 10,
+        std::bind(&NavMeshPlannerNode::obstacle_cloud_callback, this, std::placeholders::_1));
+      RCLCPP_INFO(this->get_logger(), "Subscribed to /dynamic_obstacles_cloud for obstacle injection");
+    }
+
     // --------------------------------------------------------
     // Publishers
     // --------------------------------------------------------
     path_pub_ = this->create_publisher<nav_msgs::msg::Path>("/planned_path", 10);
     path_marker_pub_ = this->create_publisher<visualization_msgs::msg::Marker>(
       "/planned_path_markers", 10);
+
+    last_obstacle_replan_time_ = this->now();
 
     RCLCPP_INFO(this->get_logger(),
       "NavMesh planner ready. Pose topic: '%s', waiting for /goal_pose...",
@@ -107,7 +154,11 @@ public:
 
   ~NavMeshPlannerNode() {
     if (nav_query_) dtFreeNavMeshQuery(nav_query_);
+    if (tile_cache_) dtFreeTileCache(tile_cache_);
     if (nav_mesh_) dtFreeNavMesh(nav_mesh_);
+    delete tc_alloc_;
+    delete tc_comp_;
+    delete tc_proc_;
   }
 
 private:
@@ -117,10 +168,25 @@ private:
   dtQueryFilter filter_;
   float extents_[3];
 
+  // dtTileCache (nullptr for MSET/static meshes)
+  dtTileCache* tile_cache_ = nullptr;
+  LinearAllocator* tc_alloc_ = nullptr;
+  FastLZCompressor* tc_comp_ = nullptr;
+  MeshProcess* tc_proc_ = nullptr;
+  std::vector<dtObstacleRef> active_obstacle_refs_;
+
   // Parameters
   int max_path_polys_;
   int max_straight_path_;
   double waypoint_spacing_;
+
+  // Clustering parameters
+  double cluster_tolerance_;
+  int min_cluster_size_;
+  int max_cluster_size_;
+  double obstacle_radius_default_;
+  double obstacle_height_;
+  double obstacle_replan_interval_;
 
   // Current pose
   bool pose_received_ = false;
@@ -130,22 +196,18 @@ private:
   bool goal_active_ = false;
   double goal_x_ = 0, goal_y_ = 0, goal_z_ = 0;
 
+  // Replan throttle
+  rclcpp::Time last_obstacle_replan_time_;
+
   // ROS interfaces
-  rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr pose_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr pose_cov_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr goal_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr replan_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr obstacle_cloud_sub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr path_marker_pub_;
 
   // --------------------------------------------------------
-  void pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
-    pose_x_ = msg->pose.position.x;
-    pose_y_ = msg->pose.position.y;
-    pose_z_ = msg->pose.position.z;
-    pose_received_ = true;
-  }
-
   void pose_cov_callback(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) {
     pose_x_ = msg->pose.pose.position.x;
     pose_y_ = msg->pose.pose.position.y;
@@ -190,6 +252,122 @@ private:
       pose_x_, pose_y_, pose_z_, goal_x_, goal_y_, goal_z_);
 
     plan_and_publish();
+  }
+
+  // --------------------------------------------------------
+  // Dynamic obstacle cloud callback (dtTileCache only)
+  // --------------------------------------------------------
+  void obstacle_cloud_callback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+    if (!tile_cache_ || !nav_mesh_) return;
+
+    // Throttle: skip if too soon since last obstacle-triggered replan
+    double elapsed = (this->now() - last_obstacle_replan_time_).seconds();
+    if (elapsed < obstacle_replan_interval_) return;
+
+    // Convert PointCloud2 to PCL
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>());
+    pcl::fromROSMsg(*msg, *cloud);
+
+    // Remove all previous obstacles
+    for (auto& ref : active_obstacle_refs_) {
+      tile_cache_->removeObstacle(ref);
+    }
+    active_obstacle_refs_.clear();
+
+    if (cloud->empty()) {
+      // No obstacles — update tile cache to clear old ones, then replan
+      update_tile_cache();
+      if (goal_active_) plan_and_publish();
+      last_obstacle_replan_time_ = this->now();
+      return;
+    }
+
+    // DBSCAN clustering via PCL EuclideanClusterExtraction
+    pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>());
+    tree->setInputCloud(cloud);
+
+    std::vector<pcl::PointIndices> cluster_indices;
+    pcl::EuclideanClusterExtraction<pcl::PointXYZ> ec;
+    ec.setClusterTolerance(cluster_tolerance_);
+    ec.setMinClusterSize(min_cluster_size_);
+    ec.setMaxClusterSize(max_cluster_size_);
+    ec.setSearchMethod(tree);
+    ec.setInputCloud(cloud);
+    ec.extract(cluster_indices);
+
+    // Add each cluster as a cylinder obstacle
+    for (const auto& indices : cluster_indices) {
+      // Compute centroid
+      double cx = 0, cy = 0, cz = 0;
+      for (int idx : indices.indices) {
+        cx += (*cloud)[idx].x;
+        cy += (*cloud)[idx].y;
+        cz += (*cloud)[idx].z;
+      }
+      int n = static_cast<int>(indices.indices.size());
+      cx /= n;
+      cy /= n;
+      cz /= n;
+
+      // Compute enclosing radius in XY plane
+      double max_r = 0;
+      for (int idx : indices.indices) {
+        double dx = (*cloud)[idx].x - cx;
+        double dy = (*cloud)[idx].y - cy;
+        double r = std::sqrt(dx * dx + dy * dy);
+        if (r > max_r) max_r = r;
+      }
+      // Enforce minimum radius
+      float radius = static_cast<float>(std::max(max_r, obstacle_radius_default_));
+
+      // Convert centroid to Detour Y-UP coordinates
+      float pos[3];
+      rosToDetour(cx, cy, cz, pos);
+
+      // Add cylinder obstacle to tile cache
+      dtObstacleRef ref = 0;
+      dtStatus status = tile_cache_->addObstacle(pos, radius,
+        static_cast<float>(obstacle_height_), &ref);
+      if (!dtStatusFailed(status) && ref != 0) {
+        active_obstacle_refs_.push_back(ref);
+      }
+    }
+
+    RCLCPP_DEBUG(this->get_logger(),
+      "Obstacle update: %zu clusters -> %zu obstacles injected",
+      cluster_indices.size(), active_obstacle_refs_.size());
+
+    // Update tile cache (rebuild affected tiles)
+    update_tile_cache();
+
+    // Replan if we have an active goal
+    if (goal_active_) {
+      plan_and_publish();
+    }
+
+    last_obstacle_replan_time_ = this->now();
+  }
+
+  // --------------------------------------------------------
+  // Update tile cache until all pending rebuilds are done
+  // --------------------------------------------------------
+  void update_tile_cache() {
+    if (!tile_cache_ || !nav_mesh_) return;
+
+    bool upToDate = false;
+    int max_iters = 100;
+    int iter = 0;
+    while (!upToDate && iter < max_iters) {
+      dtStatus status = tile_cache_->update(0, nav_mesh_, &upToDate);
+      if (dtStatusFailed(status)) {
+        RCLCPP_WARN(this->get_logger(), "dtTileCache::update() failed at iteration %d", iter);
+        break;
+      }
+      ++iter;
+    }
+    if (iter > 1) {
+      RCLCPP_DEBUG(this->get_logger(), "TileCache updated in %d iterations", iter);
+    }
   }
 
   // --------------------------------------------------------
