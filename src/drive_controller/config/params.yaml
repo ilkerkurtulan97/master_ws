@@ -1,7 +1,8 @@
 drive_controller_node:
   ros__parameters:
     # Pose topic: /pcl_pose (NDT) or /amcl_pose (AMCL bag testing)
-    pose_topic: "/pcl_pose"
+    # Isaac Sim: /robotPose (Odometry)
+    pose_topic: "/robotPose"
 
     # Pure pursuit parameters
     lookahead_distance: 1.5    # meters ahead to track

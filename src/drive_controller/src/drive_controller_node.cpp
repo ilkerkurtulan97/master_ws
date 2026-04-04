@@ -1,8 +1,8 @@
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
-#include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/path.hpp>
+#include <nav_msgs/msg/odometry.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <std_msgs/msg/bool.hpp>
@@ -43,13 +43,9 @@ public:
     obstacle_stop_timeout_ = this->get_parameter("obstacle_stop_timeout").as_double();
 
     // Subscribers
-    pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
+    odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
       pose_topic, 10,
-      std::bind(&DriveControllerNode::pose_callback, this, std::placeholders::_1));
-
-    pose_cov_sub_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
-      pose_topic, 10,
-      std::bind(&DriveControllerNode::pose_cov_callback, this, std::placeholders::_1));
+      std::bind(&DriveControllerNode::odom_callback, this, std::placeholders::_1));
 
     path_sub_ = this->create_subscription<nav_msgs::msg::Path>(
       "/planned_path", 10,
@@ -102,8 +98,7 @@ private:
   bool replan_requested_ = false;
 
   // ROS interfaces
-  rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr pose_sub_;
-  rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr pose_cov_sub_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr obstacle_sub_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_pub_;
@@ -112,15 +107,7 @@ private:
   rclcpp::TimerBase::SharedPtr control_timer_;
 
   // --------------------------------------------------------
-  void pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
-    pose_x_ = msg->pose.position.x;
-    pose_y_ = msg->pose.position.y;
-    pose_z_ = msg->pose.position.z;
-    pose_yaw_ = tf2::getYaw(msg->pose.orientation);
-    pose_received_ = true;
-  }
-
-  void pose_cov_callback(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) {
+  void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
     pose_x_ = msg->pose.pose.position.x;
     pose_y_ = msg->pose.pose.position.y;
     pose_z_ = msg->pose.pose.position.z;

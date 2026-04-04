@@ -3,16 +3,15 @@ voxel_subtraction_node:
     # Path to your static map PCD file
     # Real robot: "/home/iko/localization_ws/src/ndt_omp_ros2/data/bitlab_big.pcd"
     # Bag testing: "/home/iko/localization_ws/src/ndt_omp_ros2/data/bitlab.pcd"
-    static_map_path: "/home/iko/localization_ws/src/ndt_omp_ros2/data/bitlab_big.pcd"
+    static_map_path: "/mnt/storage/3d-scans/bitlab/Bitlab_20260305135305/data/pointcloud/Bitlab_hq_subsampled.pcd"
 
     # Voxel size in meters (0.2m = 20cm cubes)
     voxel_size: 0.2
 
     # Topic names
-    # Real robot: cloud="/hesai/pandar" pose="/pcl_pose"
-    # Bag testing: cloud="/cloud" pose="/amcl_pose"
-    cloud_topic: "/hesai/pandar"
-    pose_topic: "/pcl_pose"
+    # Isaac Sim: cloud="/front_3d_lidar/lidar_points" pose="/robotPose"
+    cloud_topic: "/front_3d_lidar/lidar_points"
+    pose_topic: "/robotPose"
 
     # Activation zone: only run subtraction when a dynamic obstacle
     # is within this distance (meters) and FOV (degrees) of the robot

@@ -2,8 +2,8 @@ navmesh_planner_node:
   ros__parameters:
     navmesh_path: "/home/iko/Desktop/master_thesis/bitlab/bitlab_tset3.bin"
 
-    # Pose topic: /pcl_pose (NDT) or /amcl_pose (AMCL bag testing)
-    pose_topic: "/pcl_pose"
+    # Pose topic: /robotPose (Isaac Sim Odometry)
+    pose_topic: "/robotPose"
 
     # Detour search extents (half-size of search box for findNearestPoly)
     poly_search_extent_x: 2.0

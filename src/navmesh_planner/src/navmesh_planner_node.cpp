@@ -1,6 +1,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
+#include <nav_msgs/msg/odometry.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
@@ -118,9 +119,9 @@ public:
     // --------------------------------------------------------
     // Subscribers
     // --------------------------------------------------------
-    pose_cov_sub_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
+    odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
       pose_topic, 10,
-      std::bind(&NavMeshPlannerNode::pose_cov_callback, this, std::placeholders::_1));
+      std::bind(&NavMeshPlannerNode::odom_callback, this, std::placeholders::_1));
 
     goal_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
       "/goal_pose", 10,
@@ -200,7 +201,7 @@ private:
   rclcpp::Time last_obstacle_replan_time_;
 
   // ROS interfaces
-  rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr pose_cov_sub_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr goal_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr replan_sub_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr obstacle_cloud_sub_;
@@ -208,7 +209,7 @@ private:
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr path_marker_pub_;
 
   // --------------------------------------------------------
-  void pose_cov_callback(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) {
+  void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
     pose_x_ = msg->pose.pose.position.x;
     pose_y_ = msg->pose.pose.position.y;
     pose_z_ = msg->pose.pose.position.z;

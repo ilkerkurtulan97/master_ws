@@ -1,6 +1,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
+#include <nav_msgs/msg/odometry.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
@@ -116,7 +117,7 @@ public:
       cloud_topic, rclcpp::SensorDataQoS(),
       std::bind(&VoxelSubtractionNode::cloud_callback, this, std::placeholders::_1));
 
-    pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
+    pose_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
       pose_topic, 10,
       std::bind(&VoxelSubtractionNode::pose_callback, this, std::placeholders::_1));
 
@@ -185,7 +186,7 @@ private:
 
   // ROS interfaces
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_;
-  rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr pose_sub_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr pose_sub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr obstacle_marker_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr obstacle_cloud_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr static_voxel_cloud_pub_;
@@ -232,7 +233,7 @@ private:
   // --------------------------------------------------------
   // Pose callback (still used for activation zone direction)
   // --------------------------------------------------------
-  void pose_callback(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) {
+  void pose_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
     robot_pose_ = Eigen::Isometry3d::Identity();
 
     Eigen::Quaterniond q(
