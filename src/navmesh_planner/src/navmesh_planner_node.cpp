@@ -77,7 +77,7 @@ public:
     }
 
     // Create TileCache helper objects (needed for TSET loading)
-    tc_alloc_ = new LinearAllocator(32000);
+    tc_alloc_ = new LinearAllocator(256000);
     tc_comp_ = new FastLZCompressor();
     tc_proc_ = new MeshProcess();
 
@@ -328,14 +328,19 @@ private:
       dtObstacleRef ref = 0;
       dtStatus status = tile_cache_->addObstacle(pos, radius,
         static_cast<float>(obstacle_height_), &ref);
-      if (!dtStatusFailed(status) && ref != 0) {
+      if (dtStatusFailed(status) || ref == 0) {
+        RCLCPP_WARN(this->get_logger(),
+          "addObstacle FAILED: status=0x%x ref=%u pos_detour=(%.2f,%.2f,%.2f) r=%.2f h=%.2f",
+          status, ref, pos[0], pos[1], pos[2], radius,
+          static_cast<float>(obstacle_height_));
+      } else {
         active_obstacle_refs_.push_back(ref);
       }
     }
 
-    RCLCPP_DEBUG(this->get_logger(),
-      "Obstacle update: %zu clusters -> %zu obstacles injected",
-      cluster_indices.size(), active_obstacle_refs_.size());
+    RCLCPP_INFO(this->get_logger(),
+      "Obstacle update: cloud=%zu pts -> %zu clusters -> %zu obstacles injected",
+      cloud->size(), cluster_indices.size(), active_obstacle_refs_.size());
 
     // Update tile cache (rebuild affected tiles)
     update_tile_cache();

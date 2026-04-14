@@ -3,20 +3,31 @@ voxel_subtraction_node:
     # Path to your static map PCD file
     # Real robot: "/home/iko/localization_ws/src/ndt_omp_ros2/data/bitlab_big.pcd"
     # Bag testing: "/home/iko/localization_ws/src/ndt_omp_ros2/data/bitlab.pcd"
+<<<<<<< Updated upstream
     static_map_path: "/home/iko/localization_ws/src/ndt_omp_ros2/data/bitlab_big.pcd"
+=======
+    static_map_path: "/home/iko/Desktop/master_thesis/bitlab"
+>>>>>>> Stashed changes
 
     # Voxel size in meters (0.2m = 20cm cubes)
-    voxel_size: 0.2
+    voxel_size: 0.1
 
     # Topic names
+<<<<<<< Updated upstream
     # Real robot: cloud="/hesai/pandar" pose="/pcl_pose"
     # Bag testing: cloud="/cloud" pose="/amcl_pose"
     cloud_topic: "/hesai/pandar"
     pose_topic: "/pcl_pose"
+=======
+    # Isaac Sim: cloud="/front_3d_lidar/lidar_points" pose="/robotPose"
+    # Bag (bitlab_ros2): cloud="/cloud" (already in map frame), pose="/odometry/filtered"
+    cloud_topic: "/cloud"
+    pose_topic: "/odometry/filtered"
+>>>>>>> Stashed changes
 
     # Activation zone: only run subtraction when a dynamic obstacle
     # is within this distance (meters) and FOV (degrees) of the robot
-    activation_distance: 3.0
+    activation_distance: 5.0
     fov_angle_deg: 360.0
 
     # Inflation radius: 1 = 3x3x3 (default), 2 = 5x5x5, 3 = 7x7x7
@@ -26,7 +37,7 @@ voxel_subtraction_node:
     # Temporal filter: voxel must appear in N consecutive scans to be reported
     # Eliminates noise from reflections/single-frame artifacts
     # At 10Hz LiDAR: 3 scans = 0.3s delay, 2 scans = 0.2s delay
-    min_consecutive_scans: 3
+    min_consecutive_scans: 1
 
     # Z-axis filter to ignore ground and ceiling points (absolute, safety net)
     min_z: -0.3
