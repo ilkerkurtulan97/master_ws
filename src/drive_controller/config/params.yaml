@@ -17,6 +17,13 @@ drive_controller_node:
     # Speed reduction when steering angle exceeds this threshold
     speed_reduction_angle: 0.3  # radians
 
+    # Twist output shaping (Innok Heros expects yaw rate in rad/s on angular.z)
+    max_yaw_rate: 0.8              # rad/s cap
+
     # Dynamic obstacle handling
     enable_obstacle_stop: true
-    obstacle_stop_timeout: 2.0  # seconds before requesting replan
+    forward_cone_length: 1.5       # stop if a point is this far ahead (meters)
+    forward_cone_half_width: 0.6   # ...and within this lateral offset (meters)
+    replan_trigger_radius: 3.0     # request replan if any obstacle is within this radius
+    replan_cooldown: 1.0           # seconds between replan requests
+    obstacle_cloud_max_age: 0.5    # ignore clouds older than this

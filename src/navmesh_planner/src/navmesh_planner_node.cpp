@@ -46,6 +46,9 @@ public:
     this->declare_parameter<double>("obstacle_radius_default", 0.3);
     this->declare_parameter<double>("obstacle_height", 2.0);
     this->declare_parameter<double>("obstacle_replan_interval", 0.5);
+    this->declare_parameter<double>("rover_half_width", 0.35);
+    this->declare_parameter<double>("obstacle_safety_margin", 0.15);
+    this->declare_parameter<double>("obstacle_base_margin", 0.2);
 
     std::string navmesh_path = this->get_parameter("navmesh_path").as_string();
     std::string pose_topic = this->get_parameter("pose_topic").as_string();
@@ -59,6 +62,9 @@ public:
     obstacle_radius_default_ = this->get_parameter("obstacle_radius_default").as_double();
     obstacle_height_ = this->get_parameter("obstacle_height").as_double();
     obstacle_replan_interval_ = this->get_parameter("obstacle_replan_interval").as_double();
+    rover_half_width_ = this->get_parameter("rover_half_width").as_double();
+    obstacle_safety_margin_ = this->get_parameter("obstacle_safety_margin").as_double();
+    obstacle_base_margin_ = this->get_parameter("obstacle_base_margin").as_double();
 
     // Detour search extents (in Detour Y-UP coords)
     double ext_x = this->get_parameter("poly_search_extent_x").as_double();
@@ -114,6 +120,10 @@ public:
       RCLCPP_ERROR(this->get_logger(), "Failed to init dtNavMeshQuery");
       return;
     }
+
+    // Explicit filter — accept only walkable polys, all areas unit cost
+    filter_.setIncludeFlags(SAMPLE_POLYFLAGS_WALK);
+    filter_.setExcludeFlags(0);
 
     // --------------------------------------------------------
     // Subscribers
@@ -187,6 +197,9 @@ private:
   double obstacle_radius_default_;
   double obstacle_height_;
   double obstacle_replan_interval_;
+  double rover_half_width_;
+  double obstacle_safety_margin_;
+  double obstacle_base_margin_;
 
   // Current pose
   bool pose_received_ = false;
@@ -260,6 +273,13 @@ private:
   void obstacle_cloud_callback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     if (!tile_cache_ || !nav_mesh_) return;
 
+    if (msg->header.frame_id != "map") {
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+        "Expected obstacle cloud in 'map' frame, got '%s' — ignoring.",
+        msg->header.frame_id.c_str());
+      return;
+    }
+
     // Throttle: skip if too soon since last obstacle-triggered replan
     double elapsed = (this->now() - last_obstacle_replan_time_).seconds();
     if (elapsed < obstacle_replan_interval_) return;
@@ -297,19 +317,19 @@ private:
 
     // Add each cluster as a cylinder obstacle
     for (const auto& indices : cluster_indices) {
-      // Compute centroid
-      double cx = 0, cy = 0, cz = 0;
+      // Centroid (XY) + min Z (ground base)
+      double cx = 0, cy = 0;
+      double min_z = std::numeric_limits<double>::max();
       for (int idx : indices.indices) {
         cx += (*cloud)[idx].x;
         cy += (*cloud)[idx].y;
-        cz += (*cloud)[idx].z;
+        if ((*cloud)[idx].z < min_z) min_z = (*cloud)[idx].z;
       }
       int n = static_cast<int>(indices.indices.size());
       cx /= n;
       cy /= n;
-      cz /= n;
 
-      // Compute enclosing radius in XY plane
+      // Enclosing XY radius, inflated by rover half-width + safety margin
       double max_r = 0;
       for (int idx : indices.indices) {
         double dx = (*cloud)[idx].x - cx;
@@ -317,12 +337,15 @@ private:
         double r = std::sqrt(dx * dx + dy * dy);
         if (r > max_r) max_r = r;
       }
-      // Enforce minimum radius
-      float radius = static_cast<float>(std::max(max_r, obstacle_radius_default_));
+      float radius = static_cast<float>(
+        std::max(max_r, obstacle_radius_default_)
+        + rover_half_width_ + obstacle_safety_margin_);
 
-      // Convert centroid to Detour Y-UP coordinates
+      // Cylinder base at cluster bottom minus small margin so it intersects
+      // the navmesh floor. Detour cylinders extend upward from pos.y by height.
+      double base_z = min_z - obstacle_base_margin_;
       float pos[3];
-      rosToDetour(cx, cy, cz, pos);
+      rosToDetour(cx, cy, base_z, pos);
 
       // Add cylinder obstacle to tile cache
       dtObstacleRef ref = 0;
@@ -421,10 +444,13 @@ private:
     // Convert to straight path (waypoints)
     std::vector<float> straight_path(max_straight_path_ * 3);
     int straight_count = 0;
+    // Corner-only string pulling: smooth path with waypoints only at turns.
+    // DT_STRAIGHTPATH_ALL_CROSSINGS emits a vertex at every polygon edge,
+    // which produces visible zigzag on voxelized meshes.
     nav_query_->findStraightPath(
       start_nearest, goal_nearest, poly_path.data(), poly_count,
       straight_path.data(), nullptr, nullptr, &straight_count,
-      max_straight_path_, DT_STRAIGHTPATH_ALL_CROSSINGS);
+      max_straight_path_, 0);
 
     if (straight_count == 0) {
       RCLCPP_ERROR(this->get_logger(), "findStraightPath returned 0 waypoints");

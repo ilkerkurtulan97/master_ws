@@ -20,6 +20,12 @@ navmesh_planner_node:
     cluster_tolerance: 0.5       # Euclidean clustering distance threshold (meters)
     min_cluster_size: 5          # Minimum points per cluster
     max_cluster_size: 5000       # Maximum points per cluster
-    obstacle_radius_default: 0.3 # Minimum cylinder radius (meters)
+    obstacle_radius_default: 0.3 # Minimum cylinder radius (meters) before inflation
     obstacle_height: 2.0         # Cylinder height in navmesh (meters)
     obstacle_replan_interval: 0.5 # Throttle between obstacle-triggered replans (seconds)
+
+    # Rover footprint inflation for dynamic obstacles
+    rover_half_width: 0.35       # Innok Heros half-width (meters)
+    obstacle_safety_margin: 0.15 # Extra clearance around obstacles (meters)
+    obstacle_base_margin: 0.2    # Drop cylinder base below cluster_min_z so it
+                                 # reliably intersects the navmesh floor.

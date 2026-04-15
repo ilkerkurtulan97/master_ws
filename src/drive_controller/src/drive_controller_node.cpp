@@ -5,12 +5,14 @@
 #include <nav_msgs/msg/path.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
+#include <sensor_msgs/point_cloud2_iterator.hpp>
 #include <std_msgs/msg/bool.hpp>
 
 #include <tf2/utils.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 #include <cmath>
+#include <limits>
 #include <vector>
 #include <algorithm>
 
@@ -28,7 +30,12 @@ public:
     this->declare_parameter<double>("control_rate", 20.0);        // Hz
     this->declare_parameter<double>("speed_reduction_angle", 0.3); // rad - reduce speed when steering hard
     this->declare_parameter<bool>("enable_obstacle_stop", true);
-    this->declare_parameter<double>("obstacle_stop_timeout", 2.0); // seconds before requesting replan
+    this->declare_parameter<double>("max_yaw_rate", 0.8);                 // rad/s cap on angular.z
+    this->declare_parameter<double>("forward_cone_length", 1.5);          // stop if point within this many m ahead
+    this->declare_parameter<double>("forward_cone_half_width", 0.6);      // and within this many m laterally
+    this->declare_parameter<double>("replan_trigger_radius", 3.0);        // request replan if obstacle within this radius
+    this->declare_parameter<double>("replan_cooldown", 1.0);              // seconds between replan requests
+    this->declare_parameter<double>("obstacle_cloud_max_age", 0.5);       // ignore stale clouds older than this
 
     std::string pose_topic = this->get_parameter("pose_topic").as_string();
     lookahead_dist_ = this->get_parameter("lookahead_distance").as_double();
@@ -40,7 +47,12 @@ public:
     double control_rate = this->get_parameter("control_rate").as_double();
     speed_reduction_angle_ = this->get_parameter("speed_reduction_angle").as_double();
     enable_obstacle_stop_ = this->get_parameter("enable_obstacle_stop").as_bool();
-    obstacle_stop_timeout_ = this->get_parameter("obstacle_stop_timeout").as_double();
+    max_yaw_rate_ = this->get_parameter("max_yaw_rate").as_double();
+    forward_cone_length_ = this->get_parameter("forward_cone_length").as_double();
+    forward_cone_half_width_ = this->get_parameter("forward_cone_half_width").as_double();
+    replan_trigger_radius_ = this->get_parameter("replan_trigger_radius").as_double();
+    replan_cooldown_ = this->get_parameter("replan_cooldown").as_double();
+    obstacle_cloud_max_age_ = this->get_parameter("obstacle_cloud_max_age").as_double();
 
     // Subscribers
     pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
@@ -87,7 +99,12 @@ private:
   double goal_tolerance_;
   double speed_reduction_angle_;
   bool enable_obstacle_stop_;
-  double obstacle_stop_timeout_;
+  double max_yaw_rate_;
+  double forward_cone_length_;
+  double forward_cone_half_width_;
+  double replan_trigger_radius_;
+  double replan_cooldown_;
+  double obstacle_cloud_max_age_;
 
   // State
   bool pose_received_ = false;
@@ -97,9 +114,10 @@ private:
   std::vector<geometry_msgs::msg::PoseStamped> path_;
   size_t closest_idx_ = 0;
 
-  bool obstacle_detected_ = false;
-  rclcpp::Time last_obstacle_time_;
-  bool replan_requested_ = false;
+  // Latest dynamic-obstacle cloud, cached as (x, y) in map frame.
+  std::vector<std::pair<double, double>> obstacle_xy_;
+  rclcpp::Time obstacle_cloud_stamp_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time last_replan_request_time_{0, 0, RCL_ROS_TIME};
 
   // ROS interfaces
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr pose_sub_;
@@ -139,21 +157,66 @@ private:
     path_ = msg->poses;
     path_active_ = true;
     closest_idx_ = 0;
-    replan_requested_ = false;
 
     RCLCPP_INFO(this->get_logger(), "New path received: %zu waypoints", path_.size());
   }
 
   // --------------------------------------------------------
+  // Cache the latest obstacle cloud as (x, y) map-frame points.
+  // The decision to stop or replan is made in the control loop against pose.
+  // --------------------------------------------------------
   void obstacle_callback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
-    // Check if cloud has any points
-    bool has_obstacles = (msg->width * msg->height > 0);
+    if (msg->header.frame_id != "map") {
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+        "Obstacle cloud frame '%s' != 'map' — ignoring.",
+        msg->header.frame_id.c_str());
+      obstacle_xy_.clear();
+      return;
+    }
 
-    if (has_obstacles) {
-      obstacle_detected_ = true;
-      last_obstacle_time_ = this->now();
-    } else {
-      obstacle_detected_ = false;
+    obstacle_xy_.clear();
+    obstacle_xy_.reserve(msg->width * msg->height);
+    sensor_msgs::PointCloud2ConstIterator<float> it_x(*msg, "x");
+    sensor_msgs::PointCloud2ConstIterator<float> it_y(*msg, "y");
+    for (; it_x != it_x.end(); ++it_x, ++it_y) {
+      obstacle_xy_.emplace_back(*it_x, *it_y);
+    }
+    obstacle_cloud_stamp_ = msg->header.stamp;
+  }
+
+  // --------------------------------------------------------
+  // Scan cached obstacle points against rover pose:
+  //   block_stop    = any point in a forward rectangle (immediate threat)
+  //   trigger_replan = any point within replan_trigger_radius
+  // --------------------------------------------------------
+  void check_obstacles(bool& block_stop, bool& trigger_replan) {
+    block_stop = false;
+    trigger_replan = false;
+    if (!enable_obstacle_stop_ || obstacle_xy_.empty()) return;
+
+    double age = (this->now() - obstacle_cloud_stamp_).seconds();
+    if (age > obstacle_cloud_max_age_) return;
+
+    const double cos_y = std::cos(-pose_yaw_);
+    const double sin_y = std::sin(-pose_yaw_);
+    const double replan_r_sq = replan_trigger_radius_ * replan_trigger_radius_;
+
+    for (const auto& p : obstacle_xy_) {
+      double dx = p.first - pose_x_;
+      double dy = p.second - pose_y_;
+
+      double dist_sq = dx * dx + dy * dy;
+      if (dist_sq < replan_r_sq) trigger_replan = true;
+
+      // Transform into rover-local frame (x forward, y left)
+      double lx = dx * cos_y - dy * sin_y;
+      double ly = dx * sin_y + dy * cos_y;
+      if (lx > 0.0 && lx < forward_cone_length_ &&
+          std::abs(ly) < forward_cone_half_width_) {
+        block_stop = true;
+      }
+
+      if (block_stop && trigger_replan) break;
     }
   }
 
@@ -180,35 +243,28 @@ private:
       return;
     }
 
-    // Obstacle handling
-    if (enable_obstacle_stop_ && obstacle_detected_) {
-      // Stop the rover
-      cmd_pub_->publish(cmd);
+    // Obstacle handling: stop only if something is directly ahead,
+    // request a replan (throttled) if something is nearby.
+    bool block_stop = false, trigger_replan = false;
+    check_obstacles(block_stop, trigger_replan);
 
-      // Check if we should request a replan
-      double elapsed = (this->now() - last_obstacle_time_).seconds();
-      if (elapsed < 0.5 && !replan_requested_) {
-        // Obstacles still active — after timeout, request replan
-        if (obstacle_stop_timeout_ > 0) {
-          // We'll request replan after seeing obstacles continuously
-          // For now, just stop and wait
-          RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-            "Obstacle detected — stopped. Waiting...");
-
-          // Request replan
-          std_msgs::msg::Bool replan_msg;
-          replan_msg.data = true;
-          replan_pub_->publish(replan_msg);
-          replan_requested_ = true;
-          RCLCPP_INFO(this->get_logger(), "Replan requested due to obstacle");
-        }
+    if (trigger_replan) {
+      double since = (this->now() - last_replan_request_time_).seconds();
+      if (since > replan_cooldown_) {
+        std_msgs::msg::Bool replan_msg;
+        replan_msg.data = true;
+        replan_pub_->publish(replan_msg);
+        last_replan_request_time_ = this->now();
+        RCLCPP_INFO(this->get_logger(), "Replan requested (obstacle within %.1fm)",
+          replan_trigger_radius_);
       }
-      return;
     }
 
-    // If obstacle cleared, reset replan flag
-    if (!obstacle_detected_) {
-      replan_requested_ = false;
+    if (block_stop) {
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+        "Obstacle blocking forward cone — stopped, waiting for new path.");
+      cmd_pub_->publish(cmd);  // zero velocity
+      return;
     }
 
     // Find closest point on path (advance only forward)
@@ -265,10 +321,13 @@ private:
               (max_linear_speed_ - min_linear_speed_));
     }
 
-    // For Ackermann: linear.x = speed, angular.z = steering angle
-    // Many ROS Ackermann bridges expect angular.z as steering angle
+    // Innok Heros consumes standard Twist: angular.z = yaw rate (rad/s).
+    // yaw_rate = curvature * linear_speed (equivalent to speed*tan(delta)/L).
+    double yaw_rate = std::tan(steering_angle) * speed / wheelbase_;
+    yaw_rate = std::clamp(yaw_rate, -max_yaw_rate_, max_yaw_rate_);
+
     cmd.linear.x = speed;
-    cmd.angular.z = steering_angle;
+    cmd.angular.z = yaw_rate;
 
     cmd_pub_->publish(cmd);
   }
