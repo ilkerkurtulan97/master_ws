@@ -3,6 +3,7 @@
 #include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/path.hpp>
+#include <nav_msgs/msg/odometry.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <std_msgs/msg/bool.hpp>
@@ -19,37 +20,48 @@ public:
   DriveControllerNode() : Node("drive_controller_node") {
     // Parameters
     this->declare_parameter<std::string>("pose_topic", "/pcl_pose");
+    this->declare_parameter<std::string>("message_typ", "PoseWithCovariance");
     this->declare_parameter<double>("lookahead_distance", 1.5);
     this->declare_parameter<double>("max_linear_speed", 0.5);
     this->declare_parameter<double>("min_linear_speed", 0.1);
-    this->declare_parameter<double>("max_steering_angle", 0.5);  // radians (~28.6 deg)
-    this->declare_parameter<double>("wheelbase", 0.32);           // meters (typical rover)
-    this->declare_parameter<double>("goal_tolerance", 0.3);       // meters
-    this->declare_parameter<double>("control_rate", 20.0);        // Hz
-    this->declare_parameter<double>("speed_reduction_angle", 0.3); // rad - reduce speed when steering hard
+    this->declare_parameter<double>("max_angular_velocity", 1.0);  // rad/s — max rotation rate
+    this->declare_parameter<double>("goal_tolerance", 0.3);        // meters
+    this->declare_parameter<double>("control_rate", 20.0);         // Hz
+    this->declare_parameter<double>("speed_reduction_omega", 0.5); // rad/s — reduce speed above this rotation rate
     this->declare_parameter<bool>("enable_obstacle_stop", true);
     this->declare_parameter<double>("obstacle_stop_timeout", 2.0); // seconds before requesting replan
+    this->declare_parameter<double>("in_place_rotation_threshold", 1.0); // rad — rotate in place above this heading error
+    this->declare_parameter<double>("in_place_kp", 2.0);                 // P-gain for in-place rotation
 
     std::string pose_topic = this->get_parameter("pose_topic").as_string();
+    std::string message_typ = this->get_parameter("message_typ").as_string();
     lookahead_dist_ = this->get_parameter("lookahead_distance").as_double();
     max_linear_speed_ = this->get_parameter("max_linear_speed").as_double();
     min_linear_speed_ = this->get_parameter("min_linear_speed").as_double();
-    max_steering_angle_ = this->get_parameter("max_steering_angle").as_double();
-    wheelbase_ = this->get_parameter("wheelbase").as_double();
+    max_angular_velocity_ = this->get_parameter("max_angular_velocity").as_double();
     goal_tolerance_ = this->get_parameter("goal_tolerance").as_double();
     double control_rate = this->get_parameter("control_rate").as_double();
-    speed_reduction_angle_ = this->get_parameter("speed_reduction_angle").as_double();
+    speed_reduction_omega_ = this->get_parameter("speed_reduction_omega").as_double();
     enable_obstacle_stop_ = this->get_parameter("enable_obstacle_stop").as_bool();
     obstacle_stop_timeout_ = this->get_parameter("obstacle_stop_timeout").as_double();
+    in_place_rotation_threshold_ = this->get_parameter("in_place_rotation_threshold").as_double();
+    in_place_kp_ = this->get_parameter("in_place_kp").as_double();
 
     // Subscribers
-    pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
-      pose_topic, 10,
-      std::bind(&DriveControllerNode::pose_callback, this, std::placeholders::_1));
-
-    pose_cov_sub_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
-      pose_topic, 10,
-      std::bind(&DriveControllerNode::pose_cov_callback, this, std::placeholders::_1));
+    if (message_typ == "Odometry") {
+      odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
+        pose_topic, 10,
+        std::bind(&DriveControllerNode::odom_callback, this, std::placeholders::_1));
+      RCLCPP_INFO(this->get_logger(), "Pose mode: Odometry (Isaac Sim)");
+    } else {
+      pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
+        pose_topic, 10,
+        std::bind(&DriveControllerNode::pose_callback, this, std::placeholders::_1));
+      pose_cov_sub_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
+        pose_topic, 10,
+        std::bind(&DriveControllerNode::pose_cov_callback, this, std::placeholders::_1));
+      RCLCPP_INFO(this->get_logger(), "Pose mode: PoseWithCovariance / PoseStamped");
+    }
 
     path_sub_ = this->create_subscription<nav_msgs::msg::Path>(
       "/planned_path", 10,
@@ -73,8 +85,8 @@ public:
       std::bind(&DriveControllerNode::control_loop, this));
 
     RCLCPP_INFO(this->get_logger(),
-      "Drive controller ready. Pose: '%s', lookahead: %.2fm, speed: %.2f m/s, wheelbase: %.2fm",
-      pose_topic.c_str(), lookahead_dist_, max_linear_speed_, wheelbase_);
+      "Drive controller ready. Pose: '%s', lookahead: %.2fm, speed: %.2f m/s, max_omega: %.2f rad/s",
+      pose_topic.c_str(), lookahead_dist_, max_linear_speed_, max_angular_velocity_);
   }
 
 private:
@@ -82,12 +94,13 @@ private:
   double lookahead_dist_;
   double max_linear_speed_;
   double min_linear_speed_;
-  double max_steering_angle_;
-  double wheelbase_;
+  double max_angular_velocity_;
   double goal_tolerance_;
-  double speed_reduction_angle_;
+  double speed_reduction_omega_;
   bool enable_obstacle_stop_;
   double obstacle_stop_timeout_;
+  double in_place_rotation_threshold_;
+  double in_place_kp_;
 
   // State
   bool pose_received_ = false;
@@ -99,17 +112,28 @@ private:
 
   bool obstacle_detected_ = false;
   rclcpp::Time last_obstacle_time_;
+  rclcpp::Time obstacle_start_time_;
   bool replan_requested_ = false;
 
   // ROS interfaces
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr pose_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr pose_cov_sub_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr obstacle_sub_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr replan_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr lookahead_marker_pub_;
   rclcpp::TimerBase::SharedPtr control_timer_;
+
+  // --------------------------------------------------------
+  void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+    pose_x_ = msg->pose.pose.position.x;
+    pose_y_ = msg->pose.pose.position.y;
+    pose_z_ = msg->pose.pose.position.z;
+    pose_yaw_ = tf2::getYaw(msg->pose.pose.orientation);
+    pose_received_ = true;
+  }
 
   // --------------------------------------------------------
   void pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
@@ -139,21 +163,27 @@ private:
     path_ = msg->poses;
     path_active_ = true;
     closest_idx_ = 0;
-    replan_requested_ = false;
+    // Do NOT reset replan_requested_ here — if an obstacle is still present,
+    // resetting it causes an infinite replan loop (path arrives → reset → replan again).
+    // replan_requested_ is only cleared when the obstacle actually clears.
 
     RCLCPP_INFO(this->get_logger(), "New path received: %zu waypoints", path_.size());
   }
 
   // --------------------------------------------------------
   void obstacle_callback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
-    // Check if cloud has any points
     bool has_obstacles = (msg->width * msg->height > 0);
 
     if (has_obstacles) {
+      if (!obstacle_detected_) {
+        // Record when this obstacle episode started (for timeout)
+        obstacle_start_time_ = this->now();
+      }
       obstacle_detected_ = true;
       last_obstacle_time_ = this->now();
     } else {
       obstacle_detected_ = false;
+      replan_requested_ = false;  // obstacle gone — allow replan on next episode
     }
   }
 
@@ -182,33 +212,25 @@ private:
 
     // Obstacle handling
     if (enable_obstacle_stop_ && obstacle_detected_) {
-      // Stop the rover
-      cmd_pub_->publish(cmd);
+      cmd_pub_->publish(cmd);  // stop
 
-      // Check if we should request a replan
-      double elapsed = (this->now() - last_obstacle_time_).seconds();
-      if (elapsed < 0.5 && !replan_requested_) {
-        // Obstacles still active — after timeout, request replan
-        if (obstacle_stop_timeout_ > 0) {
-          // We'll request replan after seeing obstacles continuously
-          // For now, just stop and wait
-          RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-            "Obstacle detected — stopped. Waiting...");
-
-          // Request replan
+      if (!replan_requested_) {
+        double obstacle_duration = (this->now() - obstacle_start_time_).seconds();
+        if (obstacle_duration > obstacle_stop_timeout_) {
+          // Obstacle has persisted long enough — request one replan
           std_msgs::msg::Bool replan_msg;
           replan_msg.data = true;
           replan_pub_->publish(replan_msg);
           replan_requested_ = true;
-          RCLCPP_INFO(this->get_logger(), "Replan requested due to obstacle");
+          RCLCPP_INFO(this->get_logger(),
+            "Obstacle persisted %.1fs — replan requested", obstacle_duration);
+        } else {
+          RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+            "Obstacle detected — stopped (%.1fs / %.1fs before replan)",
+            obstacle_duration, obstacle_stop_timeout_);
         }
       }
       return;
-    }
-
-    // If obstacle cleared, reset replan flag
-    if (!obstacle_detected_) {
-      replan_requested_ = false;
     }
 
     // Find closest point on path (advance only forward)
@@ -242,22 +264,26 @@ private:
       return;
     }
 
-    // Curvature = 2 * y / L^2
+    // Heading error to the lookahead point in robot frame
+    double heading_error = std::atan2(local_y, local_x);
+
+    // Rotate in place when the heading error is too large to track cleanly with
+    // forward motion — this produces tight pivots instead of wide arcs.
+    if (std::abs(heading_error) > in_place_rotation_threshold_) {
+      cmd.linear.x = 0.0;
+      cmd.angular.z = std::clamp(
+        in_place_kp_ * heading_error,
+        -max_angular_velocity_, max_angular_velocity_);
+      cmd_pub_->publish(cmd);
+      return;
+    }
+
+    // Curvature = 2 * y / L^2  (pure pursuit)
     double curvature = 2.0 * local_y / ld_sq;
 
-    // Steering angle (Ackermann): delta = atan(curvature * wheelbase)
-    double steering_angle = std::atan(curvature * wheelbase_);
-    steering_angle = std::clamp(steering_angle, -max_steering_angle_, max_steering_angle_);
-
-    // Speed: reduce when steering hard
-    double abs_steering = std::abs(steering_angle);
+    // Differential drive: angular velocity = curvature * linear speed
+    // (NOT Ackermann atan formula — Nova Carter uses diff drive /cmd_vel)
     double speed = max_linear_speed_;
-    if (abs_steering > speed_reduction_angle_) {
-      double ratio = 1.0 - (abs_steering - speed_reduction_angle_) /
-                     (max_steering_angle_ - speed_reduction_angle_ + 1e-6);
-      ratio = std::clamp(ratio, 0.0, 1.0);
-      speed = min_linear_speed_ + ratio * (max_linear_speed_ - min_linear_speed_);
-    }
 
     // Slow down near goal
     if (dist_to_goal < lookahead_dist_) {
@@ -265,10 +291,23 @@ private:
               (max_linear_speed_ - min_linear_speed_));
     }
 
-    // For Ackermann: linear.x = speed, angular.z = steering angle
-    // Many ROS Ackermann bridges expect angular.z as steering angle
+    double omega = curvature * speed;
+    omega = std::clamp(omega, -max_angular_velocity_, max_angular_velocity_);
+
+    // Reduce linear speed when rotating hard
+    double abs_omega = std::abs(omega);
+    if (abs_omega > speed_reduction_omega_) {
+      double ratio = 1.0 - (abs_omega - speed_reduction_omega_) /
+                     (max_angular_velocity_ - speed_reduction_omega_ + 1e-6);
+      ratio = std::clamp(ratio, 0.0, 1.0);
+      speed = min_linear_speed_ + ratio * (max_linear_speed_ - min_linear_speed_);
+      // Recompute omega with reduced speed
+      omega = curvature * speed;
+      omega = std::clamp(omega, -max_angular_velocity_, max_angular_velocity_);
+    }
+
     cmd.linear.x = speed;
-    cmd.angular.z = steering_angle;
+    cmd.angular.z = omega;
 
     cmd_pub_->publish(cmd);
   }

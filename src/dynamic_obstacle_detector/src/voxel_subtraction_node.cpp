@@ -199,6 +199,12 @@ private:
   // Frame counter for clock-independent diagnostic logging
   uint64_t diag_frame_ = 0;
 
+  // Debounce: count consecutive frames with 0 confirmed obstacles before clearing the cloud.
+  // Prevents oscillating replanning when detection momentarily drops out (e.g., LiDAR angle).
+  // At ~20 Hz LiDAR, 20 frames ≈ 1 second of sustained absence before clearing.
+  int consecutive_empty_frames_ = 0;
+  static constexpr int kObstacleClearThreshold = 20;
+
   // ROS interfaces
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr pose_sub_;
@@ -448,7 +454,14 @@ private:
     // --------------------------------------------------------
     if (confirmed_dynamic.empty()) {
       publish_empty_markers(msg->header.stamp);
+      consecutive_empty_frames_++;
+      // Only publish empty cloud after sustained absence to avoid oscillating replanning.
+      // Momentary detection gaps (LiDAR angle, motion) do NOT clear the navmesh obstacle.
+      if (consecutive_empty_frames_ >= kObstacleClearThreshold) {
+        publish_obstacle_cloud(confirmed_dynamic, msg->header.stamp);
+      }
     } else {
+      consecutive_empty_frames_ = 0;
       RCLCPP_INFO(this->get_logger(),
         "Dynamic obstacles confirmed: %zu voxels (candidates: %zu)",
         confirmed_dynamic.size(), dynamic_voxels_in_zone.size());

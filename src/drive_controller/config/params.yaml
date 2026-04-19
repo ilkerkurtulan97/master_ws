@@ -1,22 +1,31 @@
 drive_controller_node:
   ros__parameters:
-    # Pose topic: /pcl_pose (NDT) or /amcl_pose (AMCL bag testing)
-    pose_topic: "/pcl_pose"
+    # Pose topic: /robotPose (Isaac Sim) or /pcl_pose (NDT) or /amcl_pose (AMCL)
+    pose_topic: "/robotPose"
+    message_typ: "Odometry"  # "Odometry" for Isaac Sim, "PoseWithCovariance" for NDT/AMCL
 
-    # Pure pursuit parameters
-    lookahead_distance: 1.5    # meters ahead to track
+    # Pure pursuit parameters (differential drive — Nova Carter)
+    lookahead_distance: 1.0    # meters ahead to track — smaller = tighter path tracking
     max_linear_speed: 0.5      # m/s
     min_linear_speed: 0.1      # m/s (minimum when turning or near goal)
-    max_steering_angle: 0.5    # radians (~28.6 degrees)
-    wheelbase: 0.32            # meters (distance between front and rear axle)
+    max_angular_velocity: 1.5  # rad/s — increased to allow sharper in-place pivots
     goal_tolerance: 0.3        # meters — stop when this close to goal
 
     # Control loop
     control_rate: 20.0         # Hz
 
-    # Speed reduction when steering angle exceeds this threshold
-    speed_reduction_angle: 0.3  # radians
+    # Speed reduction when rotation rate exceeds this threshold
+    speed_reduction_omega: 0.5  # rad/s
+
+    # Rotate-in-place: when the heading error to the lookahead point exceeds this
+    # threshold the rover stops forward motion and pivots in place. This prevents
+    # wide U-turn arcs when the path curves sharply or doubles back.
+    # 1.0 rad ≈ 57°  (lower = triggers sooner / sharper turns)
+    in_place_rotation_threshold: 1.0  # rad
+    in_place_kp: 2.0                  # P-gain for in-place rotation
 
     # Dynamic obstacle handling
-    enable_obstacle_stop: true
+    # Disabled for Isaac Sim — voxel subtraction produces false positives until
+    # the static map is perfectly tuned. Enable once navigation is verified.
+    enable_obstacle_stop: false
     obstacle_stop_timeout: 2.0  # seconds before requesting replan

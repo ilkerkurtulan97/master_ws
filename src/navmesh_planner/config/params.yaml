@@ -1,9 +1,10 @@
 navmesh_planner_node:
   ros__parameters:
-    navmesh_path: "/home/iko/Desktop/master_thesis/bitlab/bitlab.bin"
+    navmesh_path: "/home/ilker/master_ws/src/navmesh_planner/data/bitlab_tset.bin"
 
-    # Pose topic: /pcl_pose (NDT) or /amcl_pose (AMCL bag testing)
-    pose_topic: "/pcl_pose"
+    # Pose topic: /robotPose (Isaac Sim) or /pcl_pose (NDT) or /amcl_pose (AMCL)
+    pose_topic: "/robotPose"
+    message_typ: "Odometry"  # "Odometry" for Isaac Sim, "PoseWithCovariance" for NDT/AMCL
 
     # Detour search extents (half-size of search box for findNearestPoly)
     poly_search_extent_x: 2.0
@@ -15,3 +16,12 @@ navmesh_planner_node:
 
     # Waypoint interpolation: 0 = disabled, >0 = spacing in meters
     waypoint_spacing: 0.5
+
+    # dtTileCache: DBSCAN clustering parameters for dynamic obstacles
+    cluster_tolerance: 0.5       # Euclidean clustering distance threshold (meters)
+    min_cluster_size: 1          # Minimum points per cluster (1 = accept any detection)
+    max_cluster_size: 5000       # Maximum points per cluster
+    obstacle_radius_default: 0.8 # Obstacle radius (meters) — LiDAR hits surface, not center;
+                                 # use cylinder_radius + robot_clearance as effective radius
+    obstacle_height: 2.0         # Cylinder height in navmesh (meters)
+    obstacle_replan_interval: 0.5 # Throttle between obstacle-triggered replans (seconds)

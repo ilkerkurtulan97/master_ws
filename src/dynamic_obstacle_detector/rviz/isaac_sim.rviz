@@ -54,7 +54,23 @@ Visualization Manager:
 
     - Class: rviz_default_plugins/PointCloud2
       Enabled: true
-      Name: Dynamic Obstacles
+      Name: Dynamic Candidates (pre-filter)
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /dynamic_candidates_cloud
+      Color Transformer: FlatColor
+      Color: 255; 165; 0
+      Size (Pixels): 6
+      Style: Flat Squares
+      Alpha: 0.7
+
+    - Class: rviz_default_plugins/PointCloud2
+      Enabled: true
+      Name: Dynamic Obstacles (confirmed)
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -64,7 +80,7 @@ Visualization Manager:
         Value: /dynamic_obstacles_cloud
       Color Transformer: FlatColor
       Color: 255; 50; 50
-      Size (Pixels): 8
+      Size (Pixels): 15
       Style: Flat Squares
       Alpha: 1
 
@@ -77,6 +93,28 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /dynamic_obstacles_markers
+
+    - Class: rviz_default_plugins/Path
+      Enabled: true
+      Name: Planned Path
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /planned_path
+      Color: 0; 200; 255
+      Line Width: 0.05
+
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
+      Name: Lookahead Point
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /lookahead_marker
 
     - Class: rviz_default_plugins/TF
       Enabled: false
@@ -91,6 +129,20 @@ Visualization Manager:
   Tools:
     - Class: rviz_default_plugins/MoveCamera
     - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/SetGoal
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /goal_pose
+    - Class: rviz_default_plugins/SetInitialPose
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /initialpose
 
   Value: true
   Views:
