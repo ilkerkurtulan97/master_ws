@@ -1,16 +1,41 @@
-# master_ws — Dynamic Obstacle Avoidance for a Mobile Robot
+<h1 align="center">master_ws — Dynamic Obstacle Avoidance for a Mobile Robot</h1>
 
-Autonomous navigation stack for the **Innok Heros** rover, developed as part of a
-master's thesis (*Dynamic Obstacle Avoidance for Mobile Robot*, Ilker Kurtulan,
-FH Dortmund — Embedded Systems Engineering). The rover autonomously plans a path
-across a pre-scanned indoor environment, detects dynamic obstacles from live LiDAR,
-re-plans around them at runtime, and tracks the resulting path with a pure-pursuit
-controller. The stack is validated in **NVIDIA Isaac Sim** and deployed on an
-**NVIDIA Jetson Orin NX** aboard the real rover.
+<p align="center">
+  Autonomous 3D navigation for the <b>Innok Heros</b> rover — plan a path on a baked
+  <b>Recast/Detour navigation mesh</b>, detect dynamic obstacles from live LiDAR,
+  re-plan around them at runtime, and track the route with a pure-pursuit controller.
+</p>
 
-This replaces the earlier manual, waypoint-based navigation prototype with full 3D
-path planning on a **Recast/Detour navigation mesh** plus reactive obstacle
-avoidance.
+<p align="center">
+  <img alt="ROS 2 Humble" src="https://img.shields.io/badge/ROS_2-Humble-22314E?logo=ros&logoColor=white">
+  <img alt="C++17" src="https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus&logoColor=white">
+  <img alt="Python 3.10" src="https://img.shields.io/badge/Python-3.10-3776AB?logo=python&logoColor=white">
+  <img alt="Platform" src="https://img.shields.io/badge/edge-Jetson_Orin_NX-76B900?logo=nvidia&logoColor=white">
+  <img alt="Sim" src="https://img.shields.io/badge/sim-Isaac_Sim-76B900?logo=nvidia&logoColor=white">
+</p>
+
+<p align="center">
+  <img src="docs/images/rover-innok-heros.jpg" width="88%" alt="Innok Heros rover with Hesai LiDAR and ZED 2i camera">
+  <br>
+  <sub><b>The Innok Heros rover</b> — Hesai Pandar LiDAR (top), ZED 2i stereo camera, and the Jetson Orin NX compute box.</sub>
+</p>
+
+Developed as part of a master's thesis (*Dynamic Obstacle Avoidance for Mobile Robot*,
+Ilker Kurtulan, FH Dortmund — Embedded Systems Engineering). The rover autonomously
+plans a path across a pre-scanned indoor environment, detects dynamic obstacles from
+live LiDAR, re-plans around them at runtime, and tracks the resulting path with a
+pure-pursuit controller. The stack is validated in **NVIDIA Isaac Sim** and deployed
+on an **NVIDIA Jetson Orin NX** aboard the real rover — replacing the earlier manual,
+waypoint-based navigation prototype with full 3D NavMesh planning plus reactive
+obstacle avoidance.
+
+<p align="center">
+  <img src="docs/images/planning-avoidance-rviz.jpg" width="46%" alt="RViz: green path bending around red obstacle cylinders">
+  &nbsp;
+  <img src="docs/images/replan-detour-rviz.jpg" width="46%" alt="RViz: replanned detour around a dynamic obstacle">
+  <br>
+  <sub><b>Live avoidance in RViz</b> — the planned path (green) bends around dynamic obstacles carved as cylinders (red) into the navigation mesh.</sub>
+</p>
 
 ---
 
@@ -47,6 +72,19 @@ The system is organised as a **five-layer architecture** running on ROS 2 Humble
                                                          ▼
                                                      [ROVER]
 ```
+
+<p align="center">
+  <img src="docs/images/architecture-layers.png" width="82%" alt="Five-layer architecture: Sensor, Localization, Perception, Planning, Control">
+  <br>
+  <sub><b>Five-layer architecture.</b> Each layer depends only on the one below it; the offline-baked navigation mesh and reference point cloud are shared inputs.</sub>
+</p>
+
+The end-to-end obstacle-avoidance flow — from a pedestrian stepping into the route to
+the detour, the speed cap, and the recovery once the way is clear:
+
+<p align="center">
+  <img src="docs/images/sequence-obstacle-avoidance.png" width="90%" alt="Sequence diagram of the obstacle avoidance flow across all nodes">
+</p>
 
 ---
 
@@ -94,6 +132,12 @@ inflation are separate) → per scan, transform to map frame using the pose, app
 Z-range + ground + self-filter, subtract the inflated static set, apply temporal
 persistence, and publish confirmed obstacles.
 
+<p align="center">
+  <img src="docs/images/perception-rviz.jpg" width="82%" alt="Left: the BitLab test room. Right: RViz showing live LiDAR with detected dynamic obstacles as red voxels.">
+  <br>
+  <sub><b>Perception.</b> Left: the physical BitLab test space. Right: the live scan in RViz — everything matching the static map is subtracted away, leaving only the dynamic objects (red).</sub>
+</p>
+
 | Dir | Topic | Type |
 |---|---|---|
 | Sub | `/lidar/points` (real) or `/front_3d_lidar/lidar_points` (sim) | PointCloud2 |
@@ -140,6 +184,12 @@ Opens the ZED 2i, runs person detection, and if a person is inside a **forward g
 (distance ≤ `gate_distance`, |lateral| ≤ `corridor_half_width`) publishes a reduced
 `/speed_limit`; otherwise it publishes `-1.0` ("no limit"). **Fail-open:** a dead
 camera means normal driving — the LiDAR safety bubble remains the real collision guard.
+
+<p align="center">
+  <img src="docs/images/zed-governor-garage.jpg" width="70%" alt="ZED speed governor operator view: a detected person 4.78 m away, status CLEAR - full speed">
+  <br>
+  <sub><b>Speed governor operator view.</b> A person is detected (green box, with range) but sits outside the forward gate, so the banner reads <code>CLEAR — full speed</code>. Inside the gate it turns red and caps the speed.</sub>
+</p>
 
 ### `navmesh_gui`
 Operator interface for selecting and publishing a goal pose, and for monitoring the
@@ -213,6 +263,12 @@ and in the **same coordinate frame** as the pose topic:
 - **`bake_tcbin.py`** (from the `voxelize_navmesh` toolchain) runs the Recast pipeline
   and serializes a **tiled TSET** `.tcbin`.
 
+<p align="center">
+  <img src="docs/images/navmesh-baked.jpg" width="70%" alt="The baked navigation mesh of the BitLab environment, split into walkable tiles">
+  <br>
+  <sub><b>The baked navigation mesh.</b> Walkable floor and ramps only, split into the fixed-size tiles that <code>dtTileCache</code> regenerates at runtime for obstacle carving.</sub>
+</p>
+
 Typical bake parameters (tune per scene / platform):
 
 ```bash
@@ -267,6 +323,12 @@ Two parallel configuration profiles are maintained per package: **Isaac Sim** an
 **real robot**. Switching profiles is a launch-file / YAML change only — no rebuild.
 
 ### 7.1 Isaac Sim (validation)
+
+<p align="center">
+  <img src="docs/images/isaac-sim.jpg" width="78%" alt="The rover in the reconstructed BitLab scene inside NVIDIA Isaac Sim">
+  <br>
+  <sub><b>Isaac Sim validation.</b> The reconstructed environment is imported as a visual + collision scene; OmniGraph supplies ground-truth pose on <code>/chassis/odom</code>, so planning and avoidance are tested repeatably before real-world deployment.</sub>
+</p>
 
 ```bash
 # Terminal 1 — obstacle detector (also brings up the map→World static TF + RViz)
