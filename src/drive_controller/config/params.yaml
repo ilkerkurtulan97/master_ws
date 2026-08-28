@@ -1,0 +1,51 @@
+drive_controller_node:
+  ros__parameters:
+    # Pose topic: /robotPose (Isaac Sim) or /pcl_pose (NDT) or /amcl_pose (AMCL)
+    pose_topic: "/chassis/odom"
+    message_typ: "Odometry"  # "Odometry" for Isaac Sim, "PoseWithCovariance" for NDT/AMCL
+
+    # Pure pursuit parameters (differential drive — Nova Carter)
+    lookahead_distance: 1.0    # meters ahead to track — smaller = tighter path tracking
+    max_linear_speed: 0.7      # m/s
+    min_linear_speed: 0.2      # m/s (minimum when turning or near goal)
+    max_angular_velocity: 1.5  # rad/s — increased to allow sharper in-place pivots
+    goal_tolerance: 0.3        # meters — stop when this close to goal
+
+    # Control loop
+    control_rate: 20.0         # Hz
+
+    # Speed reduction when rotation rate exceeds this threshold
+    speed_reduction_omega: 0.5  # rad/s
+
+    # Rotate-in-place: when the heading error to the lookahead point exceeds this
+    # threshold the rover stops forward motion and pivots in place. This prevents
+    # wide U-turn arcs when the path curves sharply or doubles back.
+    # 1.0 rad ≈ 57°  (lower = triggers sooner / sharper turns)
+    in_place_rotation_threshold: 1.0  # rad
+    in_place_kp: 2.0                  # P-gain for in-place rotation
+
+    # Dynamic obstacle handling
+    # enable_obstacle_stop: rover stops when an obstacle is detected AND no fresh
+    # replanned path has arrived within obstacle_stop_cooldown seconds.
+    # obstacle_stop_cooldown: suppress stop for this many seconds after a new path
+    # is received, allowing the rover to drive the replanned avoidance route.
+    # obstacle_stop_timeout: if stopped with obstacle present and no fresh path for
+    # this long, publish /replan_request as a fallback.
+    enable_obstacle_stop: true
+    obstacle_stop_cooldown: 1.0  # seconds of stop-suppression after new path arrives
+    obstacle_stop_timeout: 2.0   # seconds before requesting replan (fallback)
+
+    # Distance-proportional speed reduction.
+    # Between obstacle_slowdown_dist and obstacle_min_speed_dist the rover scales
+    # linearly from max_linear_speed down to min_linear_speed.
+    # Only forward-facing obstacles (ahead of the rover) trigger this.
+    obstacle_slowdown_dist: 2.5  # meters — start slowing here
+    obstacle_min_speed_dist: 0.5 # meters — drive at min_linear_speed by this distance
+
+    # Safety bubble: hard 360-deg stop. Any obstacle within safety_stop_radius (any
+    # direction) → zero velocity until it leaves. Planning is unaffected (separate
+    # node). safety_stop_min_dist ignores points closer than this as self (0 = off;
+    # sim has no self-returns).
+    safety_stop_enabled: true
+    safety_stop_radius: 0.5
+    safety_stop_min_dist: 0.0

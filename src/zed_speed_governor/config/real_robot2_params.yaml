@@ -1,0 +1,31 @@
+zed_speed_governor_node:
+  ros__parameters:
+    # Trigger gate: a PERSON this far AHEAD of the camera (forward axis) and
+    # within corridor_half_width of the centerline caps the rover's speed.
+    # A person 2 m to the SIDE does not trigger — only people in the driving
+    # corridor. Detection itself reaches ~10+ m; the gate decides when we
+    # react, not when we can see.
+    gate_distance: 3.0
+    corridor_half_width: 1.0
+
+    # Cap while a person is in the gate. 0.2 = drive controller
+    # min_linear_speed — the same crawl used on detours and tight turns.
+    human_slow_speed: 0.15
+
+    # Keep the cap this long after the person last qualified, so a detection
+    # blip at the gate boundary doesn't make the speed oscillate.
+    hold_time: 1.2
+
+    confidence_threshold: 40.0
+
+    # 15 fps HD720 + MEDIUM keeps GPU load moderate next to NDT localization.
+    # NOTE: switching detection_model triggers a one-time TensorRT engine
+    # download/optimize (needs internet, minutes). MEDIUM is already built.
+    camera_fps: 30
+    detection_model: "MEDIUM"
+
+    # Live annotated camera view (RED box = person in gate / limit engaged,
+    # GREEN = detected but outside the gate) — put next to RViz for demo
+    # videos. Opens on the AnyDesk desktop (:1). Press q in the window to
+    # close it; the governor keeps running. Costs a little CPU.
+    show_window: true

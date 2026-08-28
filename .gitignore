@@ -1,0 +1,7 @@
+build/
+install/
+log/
+data/bitlab.usd
+data/Bitlab_hq_subsampled.pcd
+__pycache__/
+.claude/

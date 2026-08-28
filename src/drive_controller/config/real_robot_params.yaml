@@ -1,0 +1,18 @@
+drive_controller_node:
+  ros__parameters:
+    pose_topic: "/pcl_pose"
+    message_typ: "PoseWithCovariance"
+    lookahead_distance: 1.0
+    max_linear_speed: 0.4
+    min_linear_speed: 0.1
+    max_angular_velocity: 1.5
+    goal_tolerance: 0.3
+    control_rate: 20.0
+    speed_reduction_omega: 0.5
+    in_place_rotation_threshold: 1.0
+    in_place_kp: 2.0
+    enable_obstacle_stop: true
+    obstacle_stop_cooldown: 1.0
+    obstacle_stop_timeout: 2.0
+    obstacle_slowdown_dist: 2.5
+    obstacle_min_speed_dist: 0.5

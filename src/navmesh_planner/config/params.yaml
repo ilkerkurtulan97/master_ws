@@ -1,0 +1,51 @@
+navmesh_planner_node:
+  ros__parameters:
+    navmesh_path: "/home/ilker/master_ws/src/navmesh_planner/data/blender.tcbin"
+
+    # Pose topic: /robotPose (Isaac Sim) or /pcl_pose (NDT) or /amcl_pose (AMCL)
+    pose_topic: "/chassis/odom"
+    message_typ: "Odometry"  # "Odometry" for Isaac Sim, "PoseWithCovariance" for NDT/AMCL
+
+    # Detour search extents (half-size of search box for findNearestPoly).
+    # Y-UP height tightened from 4.0 -> 1.0 m so start/goal don't snap to a
+    # ramp/ceiling polygon above the rover. Use snap_vextent for multi-floor scenes.
+    poly_search_extent_x: 2.0
+    poly_search_extent_y: 1.0
+    poly_search_extent_z: 2.0
+    snap_vextent: 4.0           # vertical Y-UP extent for findNearestPoly; blender floor is further from Z=0 than Bitlab
+
+    max_path_polys: 2048
+    max_straight_path: 256
+
+    # Waypoint interpolation: 0 = disabled, >0 = spacing in meters
+    waypoint_spacing: 0.5
+
+    # dtTileCache: DBSCAN clustering parameters for dynamic obstacles
+    cluster_tolerance: 0.5       # Euclidean clustering distance threshold (meters)
+    min_cluster_size: 3          # Minimum points per cluster (raise if lidar is noisy)
+    max_cluster_size: 5000       # Maximum points per cluster
+
+    # Cylinder geometry. Radius = max(enclosing_xy_radius + cylinder_padding,
+    # obstacle_radius_default). Height = (cz_max - cz_min) + height_padding,
+    # clamped to obstacle_height_min.
+    obstacle_radius_default: 0.3 # hard MINIMUM cylinder radius (m)
+    cylinder_padding: 0.5        # safety margin added to enclosing XY radius
+    height_padding: 0.55         # extra height added above measured cluster Z range
+    obstacle_height_min: 0.5     # never make a cylinder shorter than this
+    obstacle_decay_s: 1.0        # remove unmatched obstacle if not seen for this long
+    obstacle_floor_extend: 0.5   # extend cylinder base DOWN by this much (m) so it punches
+                                  # through the navmesh floor tile (tile bmax[1] ≈ -1.13).
+                                  # Height is increased by the same amount so the top stays fixed.
+    obstacle_min_rover_dist: 0.6        # clusters whose centroid is closer than this to the rover
+                                        # are silently dropped — they are the rover's own chassis
+                                        # appearing as "dynamic" because it moves (not in static PCD).
+                                        # Lowered from 2.0 so close objects are still detected; if the
+                                        # rover self-detects in sim, enable the detector self-filter.
+    obstacle_position_threshold: 0.05  # if obstacle XY centroid moves more than this (m),
+                                        # force remove+re-add so the navmesh carving follows it.
+                                        # 0.05 m ignores NDT/centroid jitter (no flicker) while still
+                                        # tracking real motion. Safe: is_path_blocked() runs every callback.
+
+    obstacle_replan_interval: 0.3  # Replan/heartbeat throttle (seconds). Keep below the drive
+                                    # controller's obstacle_stop_cooldown so heartbeats keep the rover
+                                    # driving. First-detection path-blocked replans bypass this.

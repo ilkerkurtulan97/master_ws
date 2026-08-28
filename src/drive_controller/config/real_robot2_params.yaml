@@ -1,0 +1,88 @@
+drive_controller_node:
+  ros__parameters:
+    pose_topic: "/pcl_pose"
+    message_typ: "PoseWithCovariance"
+
+# Speed-scaled lookahead: L = clamp(lookahead_time * speed, lookahead_distance,
+    # lookahead_max). Pure pursuit's steering gain is 2*v/L — a short FIXED
+    # lookahead (0.6) weaved left/right on straights (gain too high for the
+    # pose+actuation loop delay), a long one cuts corners on detours. Scaling
+    # gives both: ~0.9-1.2 m at full speed (stable straights), 0.6 m at the low
+    # speeds the obstacle slowdown enforces near detours (tight tracking).
+    lookahead_distance: 0.6   # minimum L (low speed / detours)
+    lookahead_time: 1.8
+    lookahead_max: 1.2
+    # First-order low-pass on omega: pose updates at 10 Hz with cm jitter, the
+    # control loop reruns at 50 Hz — unfiltered, the jitter dithers the wheels.
+    omega_smoothing_tau: 0.15
+    # Steering is computed from a pose that is stale by NDT latency + ZMQ
+    # transport, and acts after ZMQ + ROS1 + motor delay. Predict the pose
+    # forward by this many seconds (with the last commanded twist) first.
+    pose_latency: 0.20
+    # Forward acceleration ramp (m/s^2); deceleration stays instant.
+    max_linear_accel: 0.5
+    max_linear_speed: 0.5
+    min_linear_speed: 0.2
+    max_angular_velocity: 1.5
+    goal_tolerance: 0.3
+    control_rate: 50.0
+    speed_reduction_omega: 0.5
+
+    in_place_rotation_threshold: 1.0
+    in_place_kp: 2.0
+
+    # Obstacle handling. cooldown (1.0 s) MUST stay above navmesh_planner
+    # obstacle_replan_interval (0.3 s) so the planner's heartbeat keeps the rover
+    # driving the avoidance route instead of stop-starting.
+    enable_obstacle_stop: true
+    obstacle_stop_cooldown: 1.0
+    obstacle_stop_timeout: 2.0
+
+    # Slow proportionally for forward obstacles between these distances.
+    obstacle_slowdown_dist: 2.0
+    obstacle_min_speed_dist: 0.5
+
+    # Safety bubble: hard 360-deg stop within safety_stop_radius. Planning keeps
+    # running (separate node). Detector self-filter is ENABLED, so chassis returns
+    # never reach the bubble. Sizing chain (must hold, see the box-test deadlock):
+    #   planner obstacle_min_rover_dist (0.35, planner blind zone)
+    #   < safety_stop_radius (0.5, last-resort stop)
+    #   < detour clearance = cylinder_padding + bake agent radius (~0.65),
+    #     with the shy-away repulsion layer guarding the gap between the two
+    #     on estimation-variance close passes
+    # Bubble must also stay above the rover half-width (0.36) for turning safety.
+    safety_stop_enabled: true
+    safety_stop_radius: 0.5
+    safety_stop_min_dist: 0.0
+
+    # Bubble escape: without it a path passing an obstacle inside the bubble
+    # deadlocks forever (obstacle never clears, never blocks the path
+    # geometrically, nobody replans). On entry: replan request. After
+    # bubble_escape_after s still inside: reverse at bubble_escape_speed while
+    # the rear hemisphere is clear, until radius + hysteresis, then replan
+    # from the safe spot. Per-attempt cap bubble_escape_max_duration.
+    bubble_escape_after: 3.0
+    bubble_escape_speed: 0.10
+    bubble_escape_hysteresis: 0.10
+    bubble_escape_max_duration: 6.0
+
+    # Obstacle shy-away: steer gently away from the nearest MEASURED point on
+    # each side once it is closer than repulsion_radius. This guards TRUE
+    # distance — cluster estimation variance (visible-face centroid bias,
+    # persistence filtering, pose error) occasionally plants a planned detour
+    # slightly inside the bubble, freezing a run that succeeds nine times out
+    # of ten (the "got too close while rounding the box" failure). Left/right
+    # pushes cancel, so gaps/corridors are still driven straight through the
+    # middle. Sizing: safety_stop_radius (0.5) < repulsion_radius (0.7)
+    # <= planned detour clearance (~0.65-0.75), so on a correctly-cleared
+    # path it barely acts.
+    repulsion_radius: 0.70
+    repulsion_gain: 2.0        # rad/s per meter of intrusion (x abeam weight)
+    repulsion_max_omega: 0.6
+
+    # External speed limit from the ZED human governor (/speed_limit). Fresh,
+    # non-negative values cap the commanded speed (governor publishes 0.2 when
+    # a person is within 2 m ahead). Stale (> timeout) or negative values are
+    # ignored, so a dead/absent camera node fails OPEN — normal driving — and
+    # the LiDAR safety bubble remains the actual collision guard.
+    speed_limit_timeout: 1.0

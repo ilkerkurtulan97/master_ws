@@ -1,0 +1,60 @@
+voxel_subtraction_node:
+  ros__parameters:
+    # Static reference map (subtraction baseline). Same frame as /pcl_pose.
+    static_map_path: "/home/yuhesen/Desktop/mapss/Bitlab_nav.pcd"
+
+    # 0.1 m gives fine resolution so small/close objects still form a cluster.
+    voxel_size: 0.1
+
+    # Jetson topics: lidar arrives via the ZMQ bridge from the Innok.
+    cloud_topic: "/lidar/points"
+    pose_topic: "/pcl_pose"
+    message_typ: "PoseWithCovariance"
+
+# Only consider points within this range of the rover. CRITICAL for phantom
+    # suppression: NDT pose error displaces static points proportionally to RANGE
+    # (2 deg heading error = 0.2 m at 6 m but 0.5+ m at 15 m, defeating subtraction).
+    # 15.0 produced ~37 tracked ghost obstacles in an empty lab; 6.0 caps the
+    # displacement near the inflation absorb radius. Obstacles only matter near the
+    # rover/path anyway.
+    activation_distance: 6.0
+    fov_angle_deg: 360.0          # detect approaches from any direction
+    inflation_radius: 3           # 0.3 m XY absorb for NDT registration error on static surfaces
+    # Vertical absorb, SEPARATE from XY. The floor is a static surface, so
+    # vertical inflation eats the bottom (z * 0.1 m) of everything standing on
+    # it: at 3 a 45 cm box survived only as a ~1-voxel flickering sliver and
+    # was missed half the time (90 cm stacks kept a 0.5 m band — always seen).
+    # NDT z error is small (ground plane constrains it), so 1 (0.1 m) is
+    # enough vertically; wall-phantom suppression comes from the XY radius.
+    inflation_radius_z: 1
+
+    # Responsiveness: confirm quickly. 2 = ~0.2 s latency at 10 Hz. Set to 2 (not 1)
+    # because rotation smears static geometry into single-scan phantoms (pose lags
+    # the scan while turning); requiring the same voxel in 2 consecutive scans kills
+    # most of them for only +0.1 s detection latency.
+    min_consecutive_scans: 2
+
+    # Z window (map frame). Floor sits BELOW z=0 in the Bitlab map, so min_z must
+    # be well negative or the lower body / floor-level objects get clipped (this
+    # was the "voxels only above the grid" bug). Values validated on the Jetson.
+    min_z: -2.5
+    max_z: 2.5
+    ground_filter_height: -2.5   # keep points down to robot_z - 0.75 m
+
+    # Clear the obstacle cloud after this many empty frames (was hardcoded 20).
+    # 4 = ~1 s at 4 Hz, ~0.4 s at 10 Hz: cylinder vanishes soon after object leaves.
+    obstacle_clear_frames: 1
+
+    # Self-filter: remove the rover's own chassis (sensor-frame box, before the map
+    # transform). Box derived from LIVE measurement (heatmap session): all chassis
+    # self-returns sit 0.58-0.85 m BEHIND the LiDAR (x -0.6..-0.85, z -0.3..-0.1);
+    # the front hemisphere is clean within 1.3 m (LiDAR mounted near the front edge).
+    # Asymmetric on purpose: tight in front (+0.15 keeps close frontal obstacles
+    # visible), generous to the rear/below. Rover body: 920x720x440 mm.
+    self_filter_enabled: true
+    self_filter_min_x: -1.00
+    self_filter_max_x: 0.15
+    self_filter_min_y: -0.45
+    self_filter_max_y: 0.45
+    self_filter_min_z: -0.60
+    self_filter_max_z: 0.10

@@ -1,0 +1,98 @@
+navmesh_planner_node:
+  ros__parameters:
+    navmesh_path: "/home/yuhesen/Desktop/mapss/bitlab_nav.tcbin"
+    pose_topic: "/pcl_pose"
+    message_typ: "PoseWithCovariance"
+
+    poly_search_extent_x: 2.0
+    poly_search_extent_y: 1.0
+    poly_search_extent_z: 2.0
+    # Vertical (Detour Y) half-extent for snapping start/goal onto the navmesh.
+    # The Bitlab navmesh has walkable polys on the floor (Y ~= -1.0..0.0) AND on
+    # ceiling beams / mezzanine (Y ~= 1.5..5.0). The rover reports z ~= -0.3, so a
+    # window of 1.0 reaches the floor but NOT the higher surfaces. 4.0 was snapping
+    # start/goal onto ceiling beams -> "path drawn on the ceiling". Do NOT raise
+    # above ~1.3 or it will reach the shelf/mezzanine surfaces again.
+    snap_vextent: 1.0
+    max_path_polys: 2048
+    max_straight_path: 256
+    waypoint_spacing: 0.5
+
+    # Clustering of the dynamic cloud into cylinders.
+    cluster_tolerance: 0.25
+    min_cluster_size: 3           # rejects isolated single-voxel noise
+    max_cluster_size: 5000
+
+    # Minimum carved radius: carve = max(enclosing_r + cylinder_padding, this).
+    # A thin object seen edge-on (standing board) clusters with enclosing_r
+    # ~0.05-0.15, carving a ~0.4-0.5 m cylinder — the detour became a sharp
+    # tight pivot that barely missed the board. 0.55 gives every object, however
+    # thin, a >=0.85 m turn radius (with the 0.3 bake agent) and ~0.7 m surface
+    # berth. Does not affect box clusters (they carve at 0.75+ anyway), so the
+    # gap/corridor tests are untouched.
+    obstacle_radius_default: 0.55
+    # Padding added to each cluster's enclosing radius before carving. This one
+    # knob does TWO opposing jobs:
+    #  (a) detour standoff: the path clears the obstacle SURFACE by roughly
+    #      padding + bake agent radius (0.3), which must stay above the 0.5 m
+    #      safety bubble;
+    #  (b) corridor width: a gap between two obstacles is passable only if
+    #      gap > 2*(padding + visible-face overhang ~0.1) + 2*0.3.
+    # At 0.45 the minimum passable gap was ~1.7 m even though the rover is only
+    # 0.76 m wide (measured: 1.65 m refused, 1.77 m passed). 0.35 brings the
+    # minimum gap to ~1.5-1.6 m while planned standoff stays ~0.65-0.75 m; the
+    # drive controller's shy-away repulsion (repulsion_radius 0.7) now guards
+    # true distance on the estimation-variance close passes that used to
+    # freeze at 0.35 slack.
+    cylinder_padding: 0.35
+    height_padding: 0.55
+    obstacle_height_min: 0.5
+    obstacle_floor_extend: 1.5
+
+    # Remove a tracked obstacle this long after it was last seen. 1.0 s clears the
+    # carving promptly once the object leaves while bridging brief detection gaps.
+    obstacle_decay_s: 0.6
+
+    # Chassis exclusion, applied at POINT level before clustering (not per-cluster
+    # centroid). Now that the detector self-filter removes chassis returns in the
+    # sensor frame, this is only a residual guard. CRITICAL: keep BELOW the drive
+    # controller's safety_stop_radius (0.5) — if this is larger, the planner goes
+    # blind to an obstacle BEFORE the bubble stops for it, replans straight through
+    # it, and the rover deadlocks nose-to-obstacle ("stopped in front of the boxes").
+    obstacle_min_rover_dist: 0.35
+
+    # Hard cap on a carved cylinder radius. A mis-merged cluster (person + chair)
+    # can never carve more than this; prevents giant holes eating the corridor
+    # and the rover's own start position. MUST be >= max real cluster radius +
+    # cylinder_padding, or the clamp silently amputates the padding: at 0.8 the
+    # stacked-box cluster (0.4-0.7 m) carved at exactly 0.8 (7546 hits in one
+    # test log), leaving 0.1-0.25 m effective padding -> surface clearance
+    # straddled the 0.5 m safety bubble -> intermittent freeze while rounding
+    # the box. 1.1 preserves full padding for clusters up to 0.65 m.
+    obstacle_max_radius: 1.1
+
+    # Geometric path-block trigger: path counts as blocked when a tracked cylinder
+    # edge comes within this lateral clearance of the path centerline. Since the
+    # epoch re-arm (only obstacles carved AFTER the current path was planned can
+    # block it), this cannot loop on its own fresh detour, so it can be sized for
+    # sensitivity alone: 0.25 catches anything meaningfully encroaching the path.
+    path_block_clearance: 0.25
+
+    # Re-carve only when a tracked obstacle moves more than this. As the rover
+    # circles an object the centroid of the VISIBLE face drifts, so 0.05 caused a
+    # re-carve every few cm of drift; 0.12 tolerates that while a walking person
+    # (~0.14 m/frame at 10 Hz) still re-carves nearly every frame.
+    obstacle_position_threshold: 0.12
+
+    # Tracker geometry smoothing (the "breathing cylinders" fix). Measurements
+    # LARGER than the tracked envelope are adopted instantly (safety); smaller
+    # ones shrink the envelope by at most shrink_rate per update (0.03 at 10 Hz
+    # = 0.3 m/s). The navmesh is re-carved only when the smoothed envelope
+    # drifts more than geom_recarve_threshold from the carved cylinder, so
+    # per-frame cluster noise never reaches the navmesh or the replan trigger.
+    obstacle_radius_shrink_rate: 0.03
+    obstacle_geom_recarve_threshold: 0.08
+
+    # Replan/heartbeat throttle. Keep BELOW drive_controller obstacle_stop_cooldown
+    # (1.0 s) so heartbeats keep the rover driving the avoidance route.
+    obstacle_replan_interval: 0.2

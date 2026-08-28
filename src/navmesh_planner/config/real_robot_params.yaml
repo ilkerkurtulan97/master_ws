@@ -1,0 +1,24 @@
+navmesh_planner_node:
+  ros__parameters:
+    navmesh_path: "/home/ilker/Desktop/real_life_maps/bitlab.tcbin"
+    pose_topic: "/pcl_pose"
+    message_typ: "PoseWithCovariance"
+    poly_search_extent_x: 2.0
+    poly_search_extent_y: 1.0
+    poly_search_extent_z: 2.0
+    snap_vextent: 4.0
+    max_path_polys: 2048
+    max_straight_path: 256
+    waypoint_spacing: 0.5
+    cluster_tolerance: 0.5
+    min_cluster_size: 3
+    max_cluster_size: 5000
+    obstacle_radius_default: 0.3
+    cylinder_padding: 0.20
+    height_padding: 0.55
+    obstacle_height_min: 0.5
+    obstacle_decay_s: 1.5
+    obstacle_floor_extend: 0.5
+    obstacle_min_rover_dist: 2.0
+    obstacle_position_threshold: 0.005
+    obstacle_replan_interval: 0.5

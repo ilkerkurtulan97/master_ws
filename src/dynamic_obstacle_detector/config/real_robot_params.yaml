@@ -1,0 +1,14 @@
+voxel_subtraction_node:
+  ros__parameters:
+    static_map_path: "/home/ilker/Desktop/real_life_maps/Bitlab_hq_subsampled.pcd"
+    voxel_size: 0.2
+    cloud_topic: "/hesai/pandar"
+    pose_topic: "/pcl_pose"
+    message_typ: "PoseWithCovariance"
+    activation_distance: 5.0
+    fov_angle_deg: 360.0
+    inflation_radius: 1
+    min_consecutive_scans: 3
+    min_z: -0.3
+    max_z: 2.5
+    ground_filter_height: 0.2
