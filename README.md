@@ -95,7 +95,8 @@ src/
 ├── navmesh_planner/             # C++  — planning (Detour navmesh + tile cache)
 ├── drive_controller/            # C++  — control (pure pursuit + safety stops)
 ├── zed_speed_governor/          # Py   — person-aware speed cap
-└── navmesh_gui/                 # Py   — operator interface (goal selection)
+├── navmesh_gui/                 # Py   — operator interface (goal selection)
+└── rover_bringup/               # one-command launch files: real robot + Isaac Sim
 ```
 
 ### `dynamic_obstacle_detector` (`voxel_subtraction_node`)
@@ -196,9 +197,11 @@ planned path / rover pose.
 ### 4.2 Build
 
 ```bash
+git clone git@github.com:ilkerkurtulan97/master_ws.git ~/master_ws
 cd ~/master_ws
 conda deactivate                      # use system Python 3.10
 source /opt/ros/humble/setup.bash
+rosdep install --from-paths src --ignore-src -r -y
 colcon build --symlink-install
 source install/setup.bash
 ```
@@ -213,6 +216,17 @@ colcon build --packages-select navmesh_planner --symlink-install
 > restart, no rebuild.** Only C++ source changes require `colcon build`. If conda is
 > active and interferes with Python discovery, add
 > `--cmake-args -DPython3_EXECUTABLE=/usr/bin/python3`.
+
+### 4.3 External components (real robot only)
+
+These run alongside the stack but are not part of this repository:
+
+- **Localization** — `lidar_localization_ros2`, built in its own workspace
+  (e.g. `~/localization_ws`). It publishes `/pcl_pose` and the `hesai_tf` transform.
+- **LiDAR bridge** — ZMQ sender on the Innok, receiver on the Jetson publishing
+  `/lidar/points`.
+- **cmd_vel bridge** — `cmd_vel_zmq_sender.py` on the Jetson and
+  `cmd_vel_zmq_receiver_ros1.py` on the Innok. Run exactly **one** of each.
 
 ---
 
@@ -310,20 +324,12 @@ Two parallel configuration profiles are maintained per package: **Isaac Sim** an
 </p>
 
 ```bash
-# Terminal 1 — obstacle detector (also brings up the map→World static TF + RViz)
-ros2 launch dynamic_obstacle_detector isaac_sim.launch.py
-
-# Terminal 2 — navmesh planner
-ros2 launch navmesh_planner navmesh_planner.launch.py
-
-# Terminal 3 — drive controller
-ros2 launch drive_controller drive_controller.launch.py
-
-# Terminal 4 — operator GUI (optional)
-ros2 run navmesh_gui navmesh_gui
+ros2 launch rover_bringup isaac_sim.launch.py            # add gui:=true for the operator GUI
 ```
 
-Then press **Play** in Isaac Sim and set a goal via RViz "2D Goal Pose" or the GUI.
+This starts the map→World static TF, the obstacle detector, RViz, the planner and the
+drive controller, all on simulated time. Then press **Play** in Isaac Sim and set a
+goal via RViz "2D Goal Pose" or the GUI.
 
 - Isaac Sim odometry is published on **`/chassis/odom`** (the front-LiDAR world pose).
   All three sim nodes subscribe to it. **Do not use `/robotPose`** — leftover
@@ -335,22 +341,33 @@ Then press **Play** in Isaac Sim and set a goal via RViz "2D Goal Pose" or the G
 
 ### 7.2 Real robot (Jetson Orin NX)
 
-Prerequisite: bring up the **network link** and the **localizer** first.
+Prerequisite: bring up the **network link** and the LiDAR and cmd_vel **bridges**
+first (§4.3).
 
 ```bash
-# Terminal 0 — localization (separate workspace), publishes /pcl_pose
-ros2 launch lidar_localization_ros2 lidar_localization.launch.py   # + hesai_tf
-
-# Terminals 1–4 — navigation stack (real_robot2 profile)
-ros2 launch dynamic_obstacle_detector real_robot2.launch.py
-ros2 launch navmesh_planner          real_robot2.launch.py
-ros2 launch drive_controller         real_robot2.launch.py
-ros2 launch zed_speed_governor       real_robot2.launch.py         # person speed cap
+source ~/localization_ws/install/setup.bash    # lidar_localization_ros2
+source ~/master_ws/install/setup.bash
+ros2 launch rover_bringup real_robot.launch.py
 ```
+
+This starts localization (with `hesai_tf`), the obstacle detector, the planner, the
+drive controller and the ZED speed governor, all with the `real_robot2` profile.
+
+| Option | Effect |
+|---|---|
+| `localization:=false` | Skip localization, e.g. when it is already running in another terminal |
+| `zed:=false` | Skip the ZED speed governor, e.g. when no camera is attached |
+
+If the localization workspace is not sourced, the launch stops immediately with
+`package 'lidar_localization_ros2' not found` rather than starting the stack without
+a pose. Source it, or pass `localization:=false`.
 
 The `real_robot2` profile uses `/pcl_pose` (NDT), `/lidar/points` (ZMQ bridge), and
 `message_typ: PoseWithCovariance`. Ensure the cmd_vel ZMQ bridge is running with
 exactly **one** receiver on the Innok and **one** sender on the Jetson.
+
+The per-package launch files still work for starting nodes individually, e.g.
+`ros2 launch navmesh_planner real_robot2.launch.py`.
 
 ### 7.3 Pre-drive verification checklist
 
@@ -480,7 +497,8 @@ master_ws/
 │   ├── navmesh_planner/             # navmesh_planner_node (C++) + third_party/ (Detour, DetourTileCache, fastlz)
 │   ├── drive_controller/            # drive_controller_node (C++)
 │   ├── zed_speed_governor/          # governor_node (Python)
-│   └── navmesh_gui/                 # operator interface (Python)
+│   ├── navmesh_gui/                 # operator interface (Python)
+│   └── rover_bringup/               # real_robot.launch.py + isaac_sim.launch.py
 ├── scripts/
 │   ├── pcd_to_obj.py                # PCD → Y-up OBJ (navmesh baking, step 1)
 │   └── lidar_pose_relay.py          # (legacy; do not run in the current architecture)
