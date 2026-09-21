@@ -1,0 +1,161 @@
+# All parameters live on the mbf_mesh_nav node.
+# mesh_map and its layers are sub-namespaces of that single node.
+mbf_mesh_nav:
+  ros__parameters:
+
+    # ── MBF navigation server ─────────────────────────────────────────────
+    robot_frame: "base_link"
+    global_frame: "map"
+    tf_timeout: 2.0
+    # Isaac Sim Nova Carter publishes odometry here (same topic master_ws uses).
+    # MBF needs it to measure the robot's velocity; without it MBF reports
+    # "Robot is ignoring velocity commands" and aborts even while the rover drives.
+    odom_topic: "/chassis/odom"
+    # PHASE 1 (static): 0.0 = plan once. Every replan calls MeshController::setPlan
+    # which RESETS current_face_ (mesh_controller.cpp:191), forcing a re-bootstrap
+    # via the fragile nearest-vertex searchContainingFace; at 1 Hz that re-bootstrap
+    # fails intermittently -> "No containing face found!" -> the rover stalls and
+    # wiggles mid-path. With plan-once, current_face_ persists and the controller
+    # tracks the robot via robust neighbour-face search, so it drives smoothly.
+    # PLAN-ONCE. MBF's built-in continuous replanning is broken in this build:
+    # (1) planner_frequency never arms MoveBaseAction::replanning_period_ at startup
+    #     (off by default), and (2) when armed it replans UNTHROTTLED (~1600 Hz) because
+    #     AbstractPlannerExecution never uses planner_frequency to rate-limit the loop,
+    #     which thrashes mbf into an unresponsive state.
+    # Dynamic obstacle avoidance is instead driven by an external, throttled replan
+    # trigger (replan_trigger.py): it re-issues the goal ONLY when an obstacle blocks the
+    # current path, producing a clean fresh plan-once that routes around it.
+    planner_frequency: 0.0
+    controller_frequency: 20.0
+    planner_patience: 10.0
+    controller_patience: 15.0
+    oscillation_timeout: 0.0
+    # Goal-reached tolerances (mbf abstract_controller_execution; defaults dist 0.1m,
+    # angle 10deg). MeshController::isGoalReached requires BOTH the position AND the
+    # final heading to match the goal pose, but the controller steers by the cost
+    # vector field, which is degenerate AT the goal -> it can't converge the heading,
+    # so the rover reaches the spot and then SPINS 360 forever, never reporting
+    # SUCCESS. We don't care about final heading for "drive to a point", so make the
+    # angle tolerance effectively infinite (pi) -> "arrived" triggers on position
+    # alone. Loosen position tolerance to 0.3 m (0.1 m is too tight for a vector-field
+    # controller on a 0.2 m mesh). force_stop_at_goal sends a zero command so the
+    # rover halts cleanly instead of coasting past.
+    dist_tolerance: 0.3
+    angle_tolerance: 3.15
+    force_stop_at_goal: true
+    # Disable MBF's "robot is ignoring velocity commands" abort. That check calls
+    # isRobotStopped() which reads the TWIST (velocity) field of /chassis/odom, but
+    # Isaac Sim populates only the pose and leaves twist=0 -> MBF thinks the rover
+    # is stationary and aborts after 5s even while it is clearly driving (dist_to_goal
+    # decreasing). <=0 disables the check (abstract_controller_execution.cpp:276).
+    # Goal-reached is detected from pose distance, so navigation still terminates.
+    cmd_vel_ignored_tolerance: 0.0
+
+    # Planners: list of names + type for each
+    planners: ["dijkstra"]
+    dijkstra:
+      type: "dijkstra_mesh_planner/DijkstraMeshPlanner"
+      # Dijkstra avoids any vertex whose cost > cost_limit (dijkstra_mesh_planner.cpp:302).
+      # 0.99 sits just below the inflation inscribed_value (1.0), so the planner avoids the
+      # whole inflated ring around an obstacle, not just the lethal core. This is what makes
+      # the path route AROUND obstacles (matches the tutorial's cost_limit).
+      cost_limit: 0.99
+
+    # Controllers: list of names + type AND params merged in one block
+    controllers: ["mesh_controller"]
+    mesh_controller:
+      type: "mesh_controller/MeshController"
+      max_lin_velocity: 0.4
+      max_ang_velocity: 1.0
+      arrival_fading: 0.5
+      # ang_vel_factor lowered 1.5->0.8: the angular term already scales with the
+      # heading error; >1 overshoots and the rover oscillates ("changes direction").
+      ang_vel_factor: 0.8
+      lin_vel_factor: 1.0
+      # max_angle raised 30->60: naiveControl sets linear_velocity=0 whenever the
+      # heading error exceeds max_angle, so a small/noisy vector-field wobble made
+      # the rover stop-and-rotate repeatedly. A wider band keeps it rolling forward.
+      max_angle: 60.0
+      # Wider so the controller re-acquires its face after a pose jump (e.g. a TF
+      # "jump back in time" clock hiccup) via neighbour search instead of giving up.
+      max_search_radius: 1.0
+      max_search_distance: 1.0
+
+    # ── Mesh map ──────────────────────────────────────────────────────────
+    mesh_map:
+      # IMPORTANT: load a pre-welded HDF5 mesh DIRECTLY (mesh_file == working_file
+      # => mesh_map skips Assimp). Assimp's aiProcess_JoinIdenticalVertices is
+      # broken in this build: it "explodes" any OBJ into a triangle soup (~3 verts
+      # per face, no shared edges), so Dijkstra's wavefront can't leave the goal
+      # triangle -> "Predecessor of the goal is not set! No path found!" -> Path 0m
+      # -> rover never moves. blender_welded_mesh.h5 is built by weld_mesh.py:
+      # (1) weld the exploded mesh back to shared vertices, then (2) uniform-remesh
+      # (vertex clustering @0.2m) + remove non-manifold edges + keep largest
+      # component. Step 2 is REQUIRED: the raw scan triangulation is mixed-
+      # resolution, so the robot's nearest 3D vertex is often NOT a corner of the
+      # face it stands on -> MeshController bootstrap searchContainingFace() returns
+      # OUT_OF_MAP, spams "No containing face found!" and the rover never moves. A
+      # near-uniform mesh restores nearest-vertex = containing-face-corner so the
+      # controller can locate the robot. Result: 41479 v / 83071 f, V/F=0.5,
+      # manifold (mbf won't drop faces on load), ONE component. Verify: check_mesh.py.
+      # NOTE: switched from blender_welded_mesh.h5 (ramp dropped by weld_mesh.py's
+      # "keep largest component") to blender_ramp_mesh.h5, which is the same welded,
+      # near-uniform manifold mesh (42083 v / 83664 f, V/F=0.5) but WITH the ramp.
+      mesh_file: "/home/ilker/meshnavigation_ws/blender_ramp_welded.h5"
+      mesh_working_file: "/home/ilker/meshnavigation_ws/blender_ramp_welded.h5"
+      mesh_part: "Low_Bitlab"
+      mesh_working_part: "Low_Bitlab"
+      global_frame: "map"
+      default_layer: "inflation"
+      edge_cost_factor: 1.0
+      enable_layer_timer: false
+
+      # Dependency DAG (Justus Braun 2025 layer system):
+      #   steepness ─┐
+      #              ├─► combination (MaxCombinationLayer, ORs lethals) ─► inflation ─► planner
+      #   obstacle ──┘
+      # InflationLayer requires EXACTLY ONE `inputs:` layer; to inflate around BOTH
+      # walls (steepness) and dynamic obstacles we merge them via the combination layer.
+      # default_layer (= "inflation") is the only source of planner vertex costs.
+      layers: ["steepness", "obstacle", "combination", "inflation"]
+
+      steepness:
+        type: "mesh_layers/SteepnessLayer"
+        threshold: 0.4
+
+      combination:
+        type: "mesh_layers/MaxCombinationLayer"
+        inputs: ["steepness", "obstacle"]
+
+      inflation:
+        type: "mesh_layers/InflationLayer"
+        inputs: ["combination"]
+        # inflation_radius = outer ring (cost fades to 0); inscribed_radius = inner ring
+        # (full clearance for the rover footprint, ~0.35 m half-width + margin).
+        inflation_radius: 1.0
+        inscribed_radius: 0.4
+        # Explicit cost levels so cost_limit (0.99) reliably avoids the inflated ring:
+        # inscribed vertices get cost 1.0 (> 0.99 -> avoided), lethal vertices get inf.
+        inscribed_value: 1.0
+        lethal_value: .inf
+
+      obstacle:
+        type: "mesh_layers/ObstacleLayer"
+        # DYNAMIC OBSTACLE AVOIDANCE (active). Fed the SEGMENTED dynamic-only cloud from the
+        # vendored dynamic_obstacle_detector (voxel/static-map subtraction), NOT raw lidar.
+        # This mirrors the official tutorial, which feeds ObstacleLayer a segmented
+        # "obstacle_points" cloud (RMCL outlier_scan) rather than the full scan. The layer
+        # projects each point down onto the mesh and marks the hit face lethal -> combination
+        # (Max with steepness) -> inflation -> Dijkstra reroutes around it.
+        # NOTE: raw lidar here is WRONG (floor returns -> whole floor lethal, and it crashed
+        # processPointCloud last session). The detector cloud is sparse/dynamic-only/map-frame.
+        topic: "/dynamic_obstacles_cloud"
+        # Detector publishes Reliable (create_publisher depth 10) -> match it.
+        qos: "Reliable"
+        # Obstacle points sit above the floor; projecting straight down must hit the floor
+        # face within this height to mark it lethal. ~2.5 m covers person/cube-height objects.
+        robot_height: 2.5
+        # Cloud is in the 'map' frame, so the layer's p.norm() filter measures distance from
+        # the MAP origin (not a sensor). Keep huge so valid obstacle points are never rejected.
+        max_obstacle_dist: 1000000.0
+        tf_tolerance: 0.3

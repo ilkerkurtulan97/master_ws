@@ -1,0 +1,39 @@
+voxel_subtraction_node:
+  ros__parameters:
+    # ── REAL ROBOT (Innok Heros + Hesai Pandar + Jetson Orin) ──────────────
+    # Static reference PCD of Bitlab, expressed in the SAME frame your NDT
+    # localization map uses (so detector "map" == mesh "map" == NDT "map").
+    # CONFIRM: use the SAME Bitlab PCD that feeds your ros2_lidar_localization (NDT)
+    # map, otherwise dynamic subtraction and the mesh will not align.
+    # GOLDEN RULE: this is the SAME PCD the NDT map and the planning mesh come from
+    # (Bitlab_nav.pcd -> make_nav_mesh.py -> bitlab_real_mesh.h5), so detector "map" ==
+    # mesh "map" == NDT "map". Loads as pcl::PointXYZ (intensity ignored). bbox
+    # X[-33.9,4.9] Y[-19.5,26.3] Z[-3.8,6.8].
+    static_map_path: "/home/ilker/Desktop/real_life_maps/Bitlab_nav.pcd"
+
+    voxel_size: 0.1
+
+    # Real lidar topic on the Jetson (republished by your lidar_zmq receiver).
+    # CONFIRM the exact topic your ROS2 lidar receiver publishes.
+    cloud_topic: "/hesai/pandar"            # CONFIRM
+
+    # Pose that places the live lidar into the map frame. This must be your NDT
+    # localization output. CONFIRM the topic AND its type:
+    #   message_typ: "Odometry"          -> nav_msgs/Odometry
+    #   message_typ: "PoseWithCovariance"-> geometry_msgs/PoseWithCovarianceStamped
+    pose_topic: "/ndt_pose"                 # CONFIRM (e.g. /ndt_pose, /odom, /localization/pose)
+    message_typ: "PoseWithCovariance"       # CONFIRM (NDT often publishes PoseWithCovarianceStamped)
+
+    activation_distance: 15.0
+    fov_angle_deg: 360.0
+    inflation_radius: 2
+    min_consecutive_scans: 1
+
+    # Z filters are in the MAP frame. CONFIRM against your real Bitlab map Z range.
+    min_z: -5.0
+    max_z: 5.0
+
+    # Relative ground filter: ignore points below (robot_z + this). The Hesai Pandar
+    # sits at a different height on the Innok than the sim lidar did — CONFIRM/tune so
+    # the real floor returns are filtered but low obstacles are kept.
+    ground_filter_height: -2.0              # CONFIRM/tune for the Innok lidar mount height

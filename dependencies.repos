@@ -1,0 +1,20 @@
+# Upstream source dependencies, pinned to the exact commits this stack was run with.
+# Import into the workspace with:   vcs import src < dependencies.repos
+# Then apply the required fix:      git -C src/mesh_navigation apply ../../patches/mesh_map-fixes.patch
+repositories:
+  lvr2:
+    type: git
+    url: https://github.com/uos/lvr2.git
+    version: 8b345bfdfbaf5a1379f85bc60b95d46b897785d1
+  mesh_navigation:
+    type: git
+    url: https://github.com/naturerobots/mesh_navigation.git
+    version: b9f2851dfd72e88365222d57066d5d2de1595c4c
+  mesh_tools:
+    type: git
+    url: https://github.com/naturerobots/mesh_tools.git
+    version: f79a742d61382299370402d8c0460685d1c2e8c0
+  move_base_flex:
+    type: git
+    url: https://github.com/naturerobots/move_base_flex.git
+    version: 4841e12affd552e111cdce925faed8b92648b850

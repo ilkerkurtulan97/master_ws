@@ -1,0 +1,38 @@
+voxel_subtraction_node:
+  ros__parameters:
+    # Path to your static map PCD file
+    # Real robot: "/home/iko/localization_ws/src/ndt_omp_ros2/data/bitlab_big.pcd"
+    # Bag testing: "/home/iko/localization_ws/src/ndt_omp_ros2/data/bitlab.pcd"
+    static_map_path: "/home/iko/localization_ws/src/ndt_omp_ros2/data/bitlab_big.pcd"
+
+    # Voxel size in meters (0.2m = 20cm cubes)
+    voxel_size: 0.2
+
+    # Topic names
+    # Real robot: cloud="/hesai/pandar" pose="/pcl_pose"
+    # Bag testing: cloud="/cloud" pose="/amcl_pose"
+    cloud_topic: "/hesai/pandar"
+    pose_topic: "/pcl_pose"
+
+    # Activation zone: only run subtraction when a dynamic obstacle
+    # is within this distance (meters) and FOV (degrees) of the robot
+    activation_distance: 3.0
+    fov_angle_deg: 360.0
+
+    # Inflation radius: 1 = 3x3x3 (default), 2 = 5x5x5, 3 = 7x7x7
+    # Increase for more tolerance to pose/frame misalignment
+    inflation_radius: 1
+
+    # Temporal filter: voxel must appear in N consecutive scans to be reported
+    # Eliminates noise from reflections/single-frame artifacts
+    # At 10Hz LiDAR: 3 scans = 0.3s delay, 2 scans = 0.2s delay
+    min_consecutive_scans: 3
+
+    # Z-axis filter to ignore ground and ceiling points (absolute, safety net)
+    min_z: -0.3
+    max_z: 2.5
+
+    # Relative ground filter: ignore points below robot_z + this value
+    # Follows the robot's z position, prevents ground false positives from z-drift
+    # 0.2 = ignore anything below 20cm above robot base (filters ground, keeps legs/bodies)
+    ground_filter_height: 0.2

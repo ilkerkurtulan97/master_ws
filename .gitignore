@@ -1,0 +1,41 @@
+# ROS / colcon generated folders
+build/
+install/
+log/
+
+# Claude files
+.claude/
+Claude01.md
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# VS Code / editor
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# ── Large mesh / point-cloud artifacts ───────────────────────────────────────
+# Keep ONLY the real-test planning mesh (bitlab_real_mesh.h5). Everything below is
+# experimental/sim/intermediate or a backup and must NOT be pushed (large binaries).
+blender_*.h5
+*.h5.bak
+*.h5.bak2
+*.h5.corrupt*
+# Point clouds & scans (NDT/detector maps live outside the repo, e.g. ~/Desktop;
+# the 34 MB Isaac-sim detector map src/.../data/blender.pcd is not needed for the real test)
+*.pcd
+*.pts
+
+# ── Upstream dependencies (imported by vcstool from dependencies.repos) ─────────
+# Never commit these as nested repositories: doing so stores only a bare commit
+# pointer with no URL, which is what previously left four empty folders in src/.
+src/lvr2/
+src/mesh_navigation/
+src/mesh_tools/
+src/move_base_flex/
