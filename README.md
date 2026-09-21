@@ -51,27 +51,6 @@ The system is organised as a **five-layer architecture** running on ROS 2 Humble
 | **Planning** | NavMesh path planning + runtime obstacle injection & replanning | `navmesh_planner` |
 | **Control** | Pure-pursuit path tracking + safety stops + human-aware speed cap | `drive_controller`, `zed_speed_governor` |
 
-### Data flow
-
-```
-[LiDAR] ─────────────────────────────────────────────────────────────┐
-[/pcl_pose] ──────┬───────────────────────────────────────────────────┤
-                  ▼                                                     ▼
-      ┌────────────────────────┐                        ┌────────────────────────┐
-      │ dynamic_obstacle_      │   /dynamic_obstacles_  │   navmesh_planner       │
-      │ detector               │──────cloud────────────▶│   Detour navmesh +      │
-      │ (voxel subtraction)    │                        │   dtTileCache (A* +     │
-      └────────────────────────┘                        │   string-pull)          │
-                                                         └───────────┬─────────────┘
-[ZED 2i] ─► zed_speed_governor ─ /speed_limit ─┐                     │ /planned_path
-                                               ▼                     ▼
-                                      ┌────────────────────────────────────┐
-                                      │   drive_controller (pure pursuit)  │
-                                      └──────────────────┬─────────────────┘
-                                                         │ /cmd_vel
-                                                         ▼
-                                                     [ROVER]
-```
 
 <p align="center">
   <img src="docs/images/architecture-layers.png" width="82%" alt="Five-layer architecture: Sensor, Localization, Perception, Planning, Control">
