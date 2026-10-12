@@ -1,7 +1,7 @@
-<h1 align="center">master_ws — Dynamic Obstacle Avoidance for a Mobile Robot</h1>
+<h1 align="center">master_ws: Dynamic Obstacle Avoidance for a Mobile Robot</h1>
 
 <p align="center">
-  Autonomous 3D navigation for the <b>Innok Heros</b> rover — plan a path on a baked
+  Autonomous 3D navigation for the <b>Innok Heros</b> rover: plan a path on a baked
   <b>Recast/Detour navigation mesh</b>, detect dynamic obstacles from live LiDAR,
   re-plan around them at runtime, and track the route with a pure-pursuit controller.
 </p>
@@ -18,21 +18,21 @@
 <p align="center">
   <img src="docs/images/rover-innok-heros.jpg" width="88%" alt="Innok Heros rover with Hesai LiDAR and ZED 2i camera">
   <br>
-  <sub><b>The Innok Heros rover</b> — Hesai Pandar LiDAR (top), ZED 2i stereo camera, and the Jetson Orin NX compute box.</sub>
+  <sub><b>The Innok Heros rover</b>, carrying the Hesai Pandar LiDAR (top), the ZED 2i stereo camera, and the Jetson Orin NX compute box.</sub>
 </p>
 
 Developed as a master's thesis (*Dynamic Obstacle Avoidance for Mobile Robot*,
-Ilker Kurtulan, FH Dortmund — Embedded Systems Engineering). The rover takes a single
+Ilker Kurtulan, FH Dortmund, Embedded Systems Engineering). The rover takes a single
 goal pose and autonomously plans a path across a pre-scanned indoor environment,
 detects dynamic obstacles from live LiDAR, re-plans around them at runtime, and tracks
-the resulting path — replacing an earlier manual, waypoint-based prototype with full 3D
-NavMesh planning plus reactive obstacle avoidance. It is validated in **NVIDIA Isaac
-Sim** and deployed on an **NVIDIA Jetson Orin NX** aboard the real rover.
+the resulting path. It replaces an earlier manual, waypoint-based prototype with full
+3D NavMesh planning plus reactive obstacle avoidance, is validated in **NVIDIA Isaac
+Sim**, and runs on an **NVIDIA Jetson Orin NX** aboard the real rover.
 
 <p align="center">
-  <img src="docs/media/planner-carving.gif" width="82%" alt="Live split view: RViz navmesh with carved obstacle cylinders and planned path, next to the ZED speed-governor camera">
+  <img src="docs/media/dynamic-avoidance.gif" width="34%" alt="The rover autonomously avoiding a person and a box in the lab">
   <br>
-  <sub><b>The whole system, live.</b> Left: the navigation mesh in RViz with dynamic obstacles carved as red cylinders and the planned path routed around them. Right: the ZED speed governor watching for people.</sub>
+  <sub><b>Dynamic obstacle avoidance, live on the robot.</b> The rover keeps driving to its goal while a person and a box step into its path, re-planning around each one in real time (BitLab).</sub>
 </p>
 
 ---
@@ -41,7 +41,7 @@ Sim** and deployed on an **NVIDIA Jetson Orin NX** aboard the real rover.
 <summary><b>Contents</b></summary>
 
 - [The idea](#the-idea) · [What the thesis delivers](#what-the-thesis-delivers) · [Robot platform](#the-robot-platform)
-- [How it works](#how-it-works--the-basic-principle) · [Point cloud → map](#from-a-point-cloud-to-a-traversable-map) · [Architecture](#system-architecture) · [Inside the nodes](#inside-the-nodes) · [Sequence](#end-to-end-sequence)
+- [How it works](#how-it-works) · [Point cloud to map](#from-a-point-cloud-to-a-traversable-map) · [Architecture](#system-architecture) · [Inside the nodes](#inside-the-nodes) · [Sequence](#end-to-end-sequence)
 - [Safety features](#safety-features) · [Field testing](#field-testing) · [Simulation](#simulation-validation) · [Footprint](#computational-footprint) · [Limitations](#limitations)
 - **Reference:** [Setup & build](#environment-setup) · [Build a map](#build-your-own-map) · [Coordinate frames](#coordinate-frames) · [Running](#running-the-stack) · [Careful](#things-to-be-careful-about) · [Parameters](#key-parameters) · [Troubleshooting](#troubleshooting) · [Repo layout](#repository-layout)
 
@@ -55,8 +55,8 @@ A previous research thesis built the base: **LiDAR-based indoor localization**, 
 human operator placing waypoints to drive the rover. There was **no dynamic obstacle
 avoidance** while navigating.
 
-This thesis removes the operator from the loop. One goal pose in, an autonomous,
-collision-free route out — and when a person or object steps into the path, the rover
+This thesis removes the operator from the loop. One goal pose in, an autonomous
+collision-free route out. When a person or object steps into the path, the rover
 **re-plans around it on the fly**.
 
 ---
@@ -77,31 +77,31 @@ collision-free route out — and when a person or object steps into the path, th
 | Component | Role |
 |---|---|
 | **Innok Heros** rover | Mobile base. Its onboard computer runs **ROS 1** and only serves LiDAR packets. |
-| **Hesai Pandar XT16** | 3D LiDAR, 10 Hz — static-map construction and live obstacle detection. |
+| **Hesai Pandar XT16** | 3D LiDAR at 10 Hz, used for static-map construction and live obstacle detection. |
 | **ZED 2i** stereo camera | Person detection for the human-aware speed governor. |
 | **NVIDIA Jetson Orin NX** | Primary compute. Runs the full **ROS 2 Humble** stack (perception, planning, control). |
-| **Simulation workstation** | Remote RTX workstation hosting Isaac Sim (via VNC). Runs *only* the simulator — the stack runs unchanged on the Jetson. |
+| **Simulation workstation** | Remote RTX workstation hosting Isaac Sim (via VNC). Runs *only* the simulator; the stack runs unchanged on the Jetson. |
 
 The Innok base (ROS 1) and the Jetson (ROS 2) are bridged over one **direct Gigabit
 Ethernet link** using two ZMQ channels:
 
-- **LiDAR** — Innok → Jetson (`:5555`), republished on the Jetson as `/lidar/points`.
-- **cmd_vel** — Jetson → Innok (`:5556`), driving the wheels.
+- **LiDAR:** Innok → Jetson (`:5555`), republished on the Jetson as `/lidar/points`.
+- **cmd_vel:** Jetson → Innok (`:5556`), driving the wheels.
 
 See `cmd_vel_zmq_sender.py` (Jetson) and `cmd_vel_zmq_receiver_ros1.py` (Innok).
 
 ---
 
-## How it works — the basic principle
+## How it works
 
 The detector flags whatever is **not** on the static map; the planner carves those
 obstacles into the navmesh as cylinders and re-plans; the controller follows the new
-route — and once the obstacle leaves, the original path is restored.
+route; and once the obstacle leaves, the original path is restored.
 
 <p align="center">
   <img src="docs/images/principle-steps.png" width="88%" alt="Eight-step storyboard of the rover routing around a moving obstacle">
   <br>
-  <sub><b>Routing around a moving obstacle (steps 1–8).</b> The planned trajectory (blue) bends away from the moving obstacle (green) and relaxes back to the direct route as the obstacle clears.</sub>
+  <sub><b>Routing around a moving obstacle (steps 1 to 8).</b> The planned trajectory (blue) bends away from the moving obstacle (green) and relaxes back to the direct route as the obstacle clears.</sub>
 </p>
 
 ---
@@ -111,7 +111,7 @@ route — and once the obstacle leaves, the original path is restored.
 Two artifacts are produced **offline** from one handheld LiDAR scan: a **static
 reference point cloud** for the detector and a **baked navigation mesh** for the
 planner. The expensive work happens once; at runtime the planner searches only a few
-hundred convex polygons — which is why it fits on embedded hardware.
+hundred convex polygons, which is why it fits on embedded hardware.
 
 ```
    LiDAR scan            point cloud           voxel model           navigation mesh
@@ -124,7 +124,7 @@ hundred convex polygons — which is why it fits on embedded hardware.
   &nbsp;
   <img src="docs/images/navmesh-planning.jpg" width="47%" alt="A planned path on the navmesh from Start to End across the voxelized building">
   <br>
-  <sub><b>Left:</b> the baked navmesh — walkable floor and ramps only, split into the tiles <code>dtTileCache</code> regenerates at runtime. <b>Right:</b> an A* path (Start → End) across the voxelized building.</sub>
+  <sub><b>Left:</b> the baked navmesh, walkable floor and ramps only, split into the tiles <code>dtTileCache</code> regenerates at runtime. <b>Right:</b> an A* path (Start → End) across the voxelized building.</sub>
 </p>
 
 Two environments were mapped this way:
@@ -140,7 +140,7 @@ Two environments were mapped this way:
 
 ## System architecture
 
-A **five-layer architecture** on ROS 2 Humble — each layer depends only on the one
+A **five-layer architecture** on ROS 2 Humble, where each layer depends only on the one
 below it:
 
 | Layer | Responsibility | Where it lives |
@@ -163,11 +163,11 @@ below it:
 
 ```
 src/
-├── dynamic_obstacle_detector/   # C++  — perception (voxel subtraction)
-├── navmesh_planner/             # C++  — planning (Detour navmesh + tile cache)
-├── drive_controller/            # C++  — control (pure pursuit + safety stops)
-├── zed_speed_governor/          # Py   — person-aware speed cap
-├── navmesh_gui/                 # Py   — operator interface (goal selection)
+├── dynamic_obstacle_detector/   # C++   perception (voxel subtraction)
+├── navmesh_planner/             # C++   planning (Detour navmesh + tile cache)
+├── drive_controller/            # C++   control (pure pursuit + safety stops)
+├── zed_speed_governor/          # Py    person-aware speed cap
+├── navmesh_gui/                 # Py    operator interface (goal selection)
 └── rover_bringup/               # one-command launch files: real robot + Isaac Sim
 ```
 
@@ -176,7 +176,7 @@ Subtracts a pre-baked static voxel map from each live LiDAR scan; whatever remai
 a dynamic obstacle.
 
 ```
-dynamic_obstacles = live_scan_voxels − inflated_static_map_voxels
+dynamic_obstacles = live_scan_voxels minus inflated_static_map_voxels
 ```
 
 Load static PCD → voxelize (0.1 m) → inflate occupied voxels (XY and Z inflation are
@@ -186,7 +186,7 @@ subtract the inflated static set, apply temporal persistence, publish confirmed 
 <p align="center">
   <img src="docs/images/perception-rviz.jpg" width="82%" alt="Left: the BitLab test room. Right: RViz showing live LiDAR with detected dynamic obstacles as red voxels.">
   <br>
-  <sub><b>Perception.</b> Left: the physical BitLab space. Right: the live scan in RViz — everything matching the static map is subtracted away, leaving only the dynamic objects (red).</sub>
+  <sub><b>Perception.</b> Left: the physical BitLab space. Right: the live scan in RViz, where everything matching the static map is subtracted away, leaving only the dynamic objects (red).</sub>
 </p>
 
 | Dir | Topic | Type |
@@ -212,7 +212,13 @@ cylinder injected via `addObstacle()` + `update()`, then the path is re-planned.
   &nbsp;
   <img src="docs/images/replan-detour-rviz.jpg" width="46%" alt="RViz: replanned detour around a dynamic obstacle">
   <br>
-  <sub><b>Live avoidance in RViz</b> — the planned path (green) bends around dynamic obstacles carved as cylinders (red) into the navigation mesh.</sub>
+  <sub><b>Live avoidance in RViz:</b> the planned path (green) bends around dynamic obstacles carved as cylinders (red) into the navigation mesh.</sub>
+</p>
+
+<p align="center">
+  <img src="docs/media/planner-carving.gif" width="80%" alt="Live split view: RViz navmesh with carved obstacle cylinders and planned path, next to the ZED camera">
+  <br>
+  <sub><b>Carving and re-planning, live.</b> Left: obstacles become red cylinders in the navmesh and the path routes around them. Right: the matching camera view.</sub>
 </p>
 
 | Dir | Topic | Type |
@@ -225,7 +231,7 @@ cylinder injected via `addObstacle()` + `update()`, then the path is re-planned.
 | Pub | `/planned_path_markers`, `/navmesh_polys`, `/navmesh_obstacles_markers` | Marker(Array) |
 
 Recast/Detour and FastLZ are **vendored as static libraries** under
-`src/navmesh_planner/third_party/` — there is no external navigation dependency.
+`src/navmesh_planner/third_party/`, so there is no external navigation dependency.
 
 ### `drive_controller` (`drive_controller_node`)
 Pure-pursuit differential-drive follower of `/planned_path`. Speed-scaled lookahead,
@@ -235,21 +241,21 @@ bubble with a bubble-escape state machine, a shy-away repulsion layer, and an ex
 
 | Dir | Topic | Type |
 |---|---|---|
-| Sub | `/pcl_pose`, `/planned_path`, `/dynamic_obstacles_cloud`, `/speed_limit` | — |
+| Sub | `/pcl_pose`, `/planned_path`, `/dynamic_obstacles_cloud`, `/speed_limit` | mixed |
 | Pub | `/cmd_vel`, `/replan_request`, `/lookahead_marker` | Twist / Bool / Marker |
 
 ### `zed_speed_governor` (`zed_speed_governor_node`)
 Opens the ZED 2i, runs person detection, and if a person is inside a **forward gate**
 (distance ≤ `gate_distance`, |lateral| ≤ `corridor_half_width`) publishes a reduced
 `/speed_limit`; otherwise it publishes `-1.0` ("no limit"). **Fail-open:** a dead
-camera means normal driving — the LiDAR safety bubble remains the real collision guard.
+camera means normal driving; the LiDAR safety bubble remains the real collision guard.
 
 <p align="center">
-  <img src="docs/images/zed-two-people.jpg" width="47%" alt="ZED governor detecting two people with their distances, status CLEAR - full speed">
+  <img src="docs/images/zed-two-people.jpg" width="47%" alt="ZED governor detecting two people with their distances, status CLEAR full speed">
   &nbsp;
   <img src="docs/images/zed-governor-garage.jpg" width="47%" alt="ZED governor in the parking garage detecting a person 4.78 m away">
   <br>
-  <sub><b>Speed governor operator view</b> — in the lab (left) and the parking garage (right). People are detected with their range (green boxes). Outside the forward gate the banner reads <code>CLEAR — full speed</code>; inside it, the speed is halved.</sub>
+  <sub><b>Speed governor operator view</b>, in the lab (left) and the parking garage (right). People are detected with their range (green boxes). Outside the forward gate the banner reads <code>CLEAR (full speed)</code>; inside it, the speed is halved.</sub>
 </p>
 
 ### `navmesh_gui`
@@ -266,7 +272,7 @@ recovery once the way is clear:
 <p align="center">
   <img src="docs/images/sequence-obstacle-avoidance.png" width="90%" alt="Sequence diagram of the obstacle-avoidance flow across all nodes">
   <br>
-  <sub><b>End-to-end sequence across all nodes</b> — detect → carve the obstacle into the navmesh → re-plan the detour, cap the speed, and recover the original route once the way is clear.</sub>
+  <sub><b>End-to-end sequence across all nodes:</b> detect → carve the obstacle into the navmesh → re-plan the detour, cap the speed, and recover the original route once the way is clear.</sub>
 </p>
 
 ---
@@ -276,9 +282,9 @@ recovery once the way is clear:
 Three independent layers, ordered innermost-first, so a failure of one still leaves a
 guard behind it:
 
-- **Safety bubble** — a hard stop within a **0.5 m** radius of the rover (LiDAR-driven, always on).
-- **Distance slowdown** — the rover eases off as it passes near any obstacle.
-- **Camera speed cap** — the ZED speed governor halves the speed when a person is detected ahead, without altering the planned path.
+- **Safety bubble:** a hard stop within a **0.5 m** radius of the rover (LiDAR-driven, always on).
+- **Distance slowdown:** the rover eases off as it passes near any obstacle.
+- **Camera speed cap:** the ZED speed governor halves the speed when a person is detected ahead, without altering the planned path.
 
 <p align="center">
   <img src="docs/media/safety-bubble.gif" width="42%" alt="Safety bubble: the rover halts as a person steps into its 0.5 m radius">
@@ -289,26 +295,38 @@ guard behind it:
 </p>
 
 > During testing, occasional false detections traced back to a low ZED-SDK confidence
-> threshold — tightened in the governor's configuration.
+> threshold, now tightened in the governor's configuration.
 
 ---
 
 ## Field testing
 
-The integrated stack, running on the Jetson, in the two real environments.
+The integrated stack running on the Jetson, in the two real environments.
+
+**BitLab (lab)**
 
 <p align="center">
   <img src="docs/media/demo-bitlab.gif" width="30%" alt="BitLab: rover navigating around obstacles in the lab">
-  &nbsp;
-  <img src="docs/media/demo-parking.gif" width="30%" alt="Parking garage: rover driving autonomously down a corridor">
   <br>
-  <sub><b>BitLab (left)</b> — avoiding boxes in the lab. <b>Underground parking (right)</b> — autonomous drive through the garage.</sub>
+  <sub>Driving to a goal while avoiding boxes and people in the lab.</sub>
+</p>
+
+**FH underground parking garage**
+
+<p align="center">
+  <img src="docs/media/garage-run-o1.gif" width="24%" alt="Parking garage: rover driving autonomously past a parked car">
+  &nbsp;
+  <img src="docs/media/garage-run-a1.gif" width="24%" alt="Parking garage: rover driving autonomously down a corridor">
+  <br>
+  <sub>Autonomous drives through the underground parking garage.</sub>
 </p>
 
 <p align="center">
-  <img src="docs/media/demo-dashboard.gif" width="80%" alt="Parking garage run: RViz navmesh and planned path next to the live camera">
+  <img src="docs/media/garage-dash-o2.gif" width="49%" alt="Parking garage run: RViz navmesh and planned path next to the live camera">
+  &nbsp;
+  <img src="docs/media/garage-dash-a2.gif" width="49%" alt="Parking garage run: RViz navmesh and path next to the live camera, second run">
   <br>
-  <sub><b>Operator dashboard during a parking-garage run</b> — the navmesh and planned path in RViz next to the live camera feed.</sub>
+  <sub>The operator dashboard during garage runs: the navmesh and planned path in RViz, next to the live camera feed.</sub>
 </p>
 
 ---
@@ -334,7 +352,7 @@ repeatedly entering and leaving the route and detection zone:
 | Total RAM (all nodes) | **810 MB** | of 7.6 GB |
 | Total CPU (all nodes) | **141 %** | of 800 % (8 cores) |
 
-The whole stack — perception, planning, control and the camera governor — runs
+The whole stack (perception, planning, control and the camera governor) runs
 comfortably within one embedded device.
 
 ---
@@ -345,7 +363,7 @@ Honest scope, for anyone building on this:
 
 - **The map is static.** A car that parks *after* the scan stays a dynamic obstacle indefinitely; nothing promotes a persistent detection into the static map.
 - **Obstacles are observed, not predicted.** Against something accelerating at high speed into the path, the system would fail.
-- **Approaches were assessed, not fully benchmarked.** The comparison is a selection study: Nav2 is discussed (it cannot operate on 2.5D–3D navigation), and Mesh Navigation was tested but not run end-to-end.
+- **Approaches were assessed, not fully benchmarked.** The comparison is a selection study: Nav2 is discussed (it cannot operate on 2.5D/3D navigation), and Mesh Navigation was tested but not run end-to-end.
 - **No liveness check on perception.** The controller acts on the last obstacle message it received; a dead detector node is not detected.
 
 ---
@@ -397,11 +415,11 @@ colcon build --packages-select navmesh_planner --symlink-install
 
 These run alongside the stack but are not part of this repository:
 
-- **Localization** — `lidar_localization_ros2`, built in its own workspace
+- **Localization:** `lidar_localization_ros2`, built in its own workspace
   (e.g. `~/localization_ws`). It publishes `/pcl_pose` and the `hesai_tf` transform.
-- **LiDAR bridge** — ZMQ sender on the Innok, receiver on the Jetson publishing
+- **LiDAR bridge:** ZMQ sender on the Innok, receiver on the Jetson publishing
   `/lidar/points`.
-- **cmd_vel bridge** — `cmd_vel_zmq_sender.py` on the Jetson and
+- **cmd_vel bridge:** `cmd_vel_zmq_sender.py` on the Jetson and
   `cmd_vel_zmq_receiver_ros1.py` on the Innok. Run exactly **one** of each.
 
 ---
@@ -413,8 +431,8 @@ and in the **same coordinate frame** as the pose topic:
 
 | File | Used by | Purpose |
 |---|---|---|
-| `<scene>.tcbin` | `navmesh_planner` | Tiled Detour navmesh — *where the rover can drive*. Supports runtime obstacle carving. |
-| `<scene>.pcd` | `dynamic_obstacle_detector` | Static reference point cloud — subtracted from each live scan to find dynamic objects. |
+| `<scene>.tcbin` | `navmesh_planner` | Tiled Detour navmesh: *where the rover can drive*. Supports runtime obstacle carving. |
+| `<scene>.pcd` | `dynamic_obstacle_detector` | Static reference point cloud: subtracted from each live scan to find dynamic objects. |
 
 ### Baking pipeline
 
@@ -449,7 +467,7 @@ The planner logs the tile count at startup:
 [navmesh_planner] TSET NavMesh loaded: N tiles, dtTileCache active
 ```
 
-A tile count that seems too low for the scene means **undercoverage** — usually a
+A tile count that seems too low for the scene means **undercoverage**, usually a
 simplified/holey source mesh, `--agent-max-climb` too low, or a missing/incorrect
 Z-up handling. Use the full-geometry mesh, not a simplified collision hull.
 
@@ -483,7 +501,7 @@ walls, wrong floor, wildly offset positions). All topics use the `map` frame.
 ## Running the stack
 
 Two parallel configuration profiles are maintained per package: **Isaac Sim** and
-**real robot**. Switching profiles is a launch-file / YAML change only — no rebuild.
+**real robot**. Switching profiles is a launch-file / YAML change only, with no rebuild.
 
 ### Isaac Sim (validation)
 
@@ -496,9 +514,9 @@ drive controller, all on simulated time. Then press **Play** in Isaac Sim and se
 goal via RViz "2D Goal Pose" or the GUI.
 
 - Isaac Sim odometry is published on **`/chassis/odom`** (the front-LiDAR world pose).
-  All three sim nodes subscribe to it. **Do not use `/robotPose`** — leftover
+  All three sim nodes subscribe to it. **Do not use `/robotPose`**; leftover
   OmniGraph nodes leave it with conflicting publishers.
-- **Do not run `lidar_pose_relay.py`** — it is superseded and adds a wrong
+- **Do not run `lidar_pose_relay.py`**; it is superseded and adds a wrong
   `/robotPose` publisher.
 - Stop any `world_pose_tf_relay.py` before launching (it double-parents `base_link`
   and breaks TF).
@@ -535,8 +553,8 @@ The per-package launch files still work for starting nodes individually, e.g.
 
 ### Pre-drive verification checklist
 
-- [ ] `ros2 topic hz /lidar/points` ≈ 10 Hz (real) — see network note below.
-- [ ] `ros2 topic echo /pcl_pose --once` — localizer producing a pose.
+- [ ] `ros2 topic hz /lidar/points` ≈ 10 Hz (real); see the network note below.
+- [ ] `ros2 topic echo /pcl_pose --once`: localizer producing a pose.
 - [ ] Planner log: `TSET NavMesh loaded: N tiles` with N > 0.
 - [ ] RViz `/navmesh_polys` covers the actual floor you scanned.
 - [ ] RViz `/static_map_voxelized` aligns with walls/floor (no vertical offset).
@@ -547,18 +565,18 @@ The per-package launch files still work for starting nodes individually, e.g.
 
 ## Things to be careful about
 
-These are hard-won field lessons — violating them reintroduces known failures.
+These are hard-won field lessons; violating them reintroduces known failures.
 
 **Environment / build**
 - `conda deactivate` before every ROS 2 command (Python 3.10 vs conda 3.13).
 - `--symlink-install`: config/launch = restart only; C++ = rebuild. After a build,
   **relaunch** the node or it keeps the old params from `install/`.
 - **Absolute paths in the YAML configs** (`navmesh_path`, `static_map_path`) must be
-  updated for each machine — they are the first thing to break on a new deployment.
+  updated for each machine; they are the first thing to break on a new deployment.
 
 **Network (real robot)**
 - The 10 Hz LiDAR depends on the **direct Gigabit cable** (a 100 Mb router drops it
-  to ~4 Hz and degrades everything downstream). The **Innok side is not persistent** —
+  to ~4 Hz and degrades everything downstream). The **Innok side is not persistent:**
   after an Innok reboot, re-apply the network recovery and re-check
   `ros2 topic hz /lidar/points` ≈ 10 before testing.
 - The cmd_vel receiver on the Innok **must** be started with
@@ -582,7 +600,7 @@ These are hard-won field lessons — violating them reintroduces known failures.
 
 **Perception**
 - XY and Z inflation are **separate**. The floor is a static surface, so vertical
-  inflation eats the bottom of every object standing on it — keep `inflation_radius_z`
+  inflation eats the bottom of every object standing on it, so keep `inflation_radius_z`
   small (1) or short objects (e.g. a 45 cm box) get missed.
 - Keep `activation_distance` modest (≈ 6 m on the real robot). Localization heading
   error displaces static points proportionally to range, producing phantom obstacles
@@ -608,8 +626,8 @@ These are hard-won field lessons — violating them reintroduces known failures.
 ### `drive_controller`
 | Parameter | Typical | Notes |
 |---|---|---|
-| `lookahead_distance` / `lookahead_time` | 0.6–1.2 | Speed-scaled lookahead. |
-| `max_linear_speed` | 0.4–0.5 | Reduce for first real-world tests. |
+| `lookahead_distance` / `lookahead_time` | 0.6 to 1.2 | Speed-scaled lookahead. |
+| `max_linear_speed` | 0.4 to 0.5 | Reduce for first real-world tests. |
 | `safety_stop_radius` | 0.5 | Hard LiDAR safety bubble. |
 | `repulsion_radius` / `repulsion_gain` | 0.70 / 2.0 | Shy-away layer. |
 | `pose_latency` / `omega_smoothing_tau` | 0.20 / 0.15 | Latency comp. + jitter filter. |
@@ -622,8 +640,8 @@ These are hard-won field lessons — violating them reintroduces known failures.
 | `activation_distance` | 10.0 | 6.0 | Long range → phantoms on the real robot. |
 | `inflation_radius` / `inflation_radius_z` | 2 | 3 / 1 | XY vs Z absorb are independent. |
 | `min_consecutive_scans` | 1 | 2 | Sim QT128 publishes partial slices → 1. |
-| `ground_filter_height` | −2.0 | −2.5 | Relative to robot Z; must clear the floor. |
-| `self_filter_*` | — | on | Sensor-frame chassis box (real robot only). |
+| `ground_filter_height` | -2.0 | -2.5 | Relative to robot Z; must clear the floor. |
+| `self_filter_*` | off | on | Sensor-frame chassis box (real robot only). |
 
 ### `zed_speed_governor`
 | Parameter | Typical | Notes |
