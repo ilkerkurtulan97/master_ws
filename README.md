@@ -153,6 +153,8 @@ below it:
 
 <p align="center">
   <img src="docs/images/architecture-layers.png" width="80%" alt="Five-layer architecture: Sensor, Localization, Perception, Planning, Control">
+  <br>
+  <sub><b>Five-layer architecture.</b> Each layer depends only on the one below it; the offline-baked navigation mesh and reference point cloud are the shared inputs.</sub>
 </p>
 
 ---
@@ -263,6 +265,8 @@ recovery once the way is clear:
 
 <p align="center">
   <img src="docs/images/sequence-obstacle-avoidance.png" width="90%" alt="Sequence diagram of the obstacle-avoidance flow across all nodes">
+  <br>
+  <sub><b>End-to-end sequence across all nodes</b> — detect → carve the obstacle into the navmesh → re-plan the detour, cap the speed, and recover the original route once the way is clear.</sub>
 </p>
 
 ---
